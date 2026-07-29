@@ -4,7 +4,7 @@ Cada tentativa abre a conexão e a fecha imediatamente — e fechar a conexão
 CANCELA o seek, então nada fica publicado. Todas as tentativas são casuais
 (rated=false), nunca ranqueadas.
 
-Uso (da pasta projeto_final/):
+Uso (da raiz do repositório):
     python /caminho/para/probe_seek.py
 """
 

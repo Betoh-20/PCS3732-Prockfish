@@ -1,4 +1,4 @@
-# Makefile — atalhos para os modos de execução do projeto_final.
+# Makefile — atalhos para os modos de execução do projeto.
 #
 #   make                  lista os alvos disponíveis
 #   make stockfish        joga contra o Stockfish local
@@ -57,13 +57,13 @@ MOCK_ARGS       ?=
 # dependências, o Stockfish e a config de fontes). Sem isso, assume-se que o
 # ambiente atual já tem tudo — inclusive quando já se está dentro do shell.
 ifeq ($(USE_NIX),1)
-RUN := nix develop $(CURDIR)/.. --command
+RUN := nix develop $(CURDIR) --command
 else
 RUN :=
 endif
 
-# `python -m app.main` precisa rodar com projeto_final/ como diretório atual;
-# `make -C projeto_final` e `make` de dentro dele já garantem isso.
+# `python -m app.main` precisa rodar com a raiz do repositório como diretório
+# atual; `make -C <repo>` e `make` de dentro dele já garantem isso.
 APP  = $(RUN) $(PYTHON) -m app.main --color $(COLOR) --log-level $(LOG_LEVEL)
 
 STOCKFISH_OPTS = --mode stockfish --stockfish-time $(STOCKFISH_TIME) \
@@ -150,7 +150,7 @@ check-token:
 	@$(RUN) $(PYTHON) -c 'from app.config import LICHESS_TOKEN; raise SystemExit(0 if LICHESS_TOKEN else 1)' || { \
 	  echo 'Erro: token do Lichess não encontrado.'; \
 	  echo 'Crie um em https://lichess.org/account/oauth/token/create com os escopos'; \
-	  echo 'board:play e challenge:write, e salve-o em projeto_final/.lichess_token:'; \
+	  echo 'board:play e challenge:write, e salve-o em .lichess_token:'; \
 	  echo "  echo 'lip_seu_token' > .lichess_token && chmod 600 .lichess_token"; \
 	  exit 2; }
 
@@ -164,11 +164,11 @@ deps:
 	$(RUN) $(PYTHON) -m pip install -r requirements.txt
 
 shell:
-	nix develop $(CURDIR)/..
+	nix develop $(CURDIR)
 
 # Mesmo ambiente para quem não tem os experimental-features de flakes.
 shell-classic:
-	nix-shell $(CURDIR)/..
+	nix-shell $(CURDIR)
 
 clean:
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +

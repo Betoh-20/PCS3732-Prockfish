@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambientes virtuais Python
+.venv/
+venv/
+pyvenv.cfg
+
+# Empacotamento Python
+*.egg-info/
+dist/
+
+# Cache de ferramentas de teste / análise estática
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build do Arduino (poc_xadrez/)
+build/
+*.o
+*.elf
+
+# Nix
+result
+result-*
+
+# Arquivos temporários
+*.tmp
+*.log
+*.bak
+*.swp
+
+# Segredos: CHESS_LICHESS_TOKEN e demais variáveis de ambiente
+# consumidas por app/config.py
+.env
+.env.*
+!.env.example
+
+# Credenciais locais (token da Board API do Lichess)
+.lichess_token
+*.token

@@ -82,11 +82,10 @@ set CHESS_STOCKFISH_PATH=C:\caminho\para\stockfish.exe
 
 ### Atalhos do Makefile
 
-Todos os modos de execução têm um alvo no `Makefile` da pasta `projeto_final/`.
+Todos os modos de execução têm um alvo no `Makefile` da raiz do repositório.
 `make` sozinho lista os alvos com os valores correntes das variáveis:
 
 ```bash
-cd projeto_final
 make
 ```
 
@@ -152,7 +151,7 @@ para desenhar as peças. Duas formas de usar:
 ```bash
 # Entrar no ambiente uma vez e trabalhar dentro dele
 nix develop        # ou: nix-shell, sem os experimental-features de flakes
-cd projeto_final && make stockfish
+make stockfish
 
 # Ou rodar um alvo isolado dentro do ambiente
 make stockfish USE_NIX=1
@@ -219,7 +218,7 @@ histórico do shell e visível para qualquer processo via `ps`. Prefira um
 arquivo:
 
 ```bash
-# Na raiz de projeto_final/ — já está no .gitignore
+# Na raiz do repositório — já está no .gitignore
 echo 'lip_seu_token' > .lichess_token
 chmod 600 .lichess_token
 
@@ -241,7 +240,7 @@ A busca acontece nesta ordem — a primeira fonte que tiver um token vence:
 | 2 | `--token-file ARQUIVO` |
 | 3 | `$CHESS_LICHESS_TOKEN` |
 | 4 | `$CHESS_LICHESS_TOKEN_FILE` (caminho de um arquivo) |
-| 5 | `projeto_final/.lichess_token` |
+| 5 | `.lichess_token` (na raiz do repositório) |
 | 6 | `~/.config/chess-board/lichess_token` |
 
 Um `--token-file` que não puder ser lido é erro, não uma volta silenciosa

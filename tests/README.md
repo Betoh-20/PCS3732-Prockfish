@@ -4,7 +4,7 @@ Scripts independentes, sem dependências além das do `requirements.txt`.
 Nenhum deles precisa de token, de rede, de Stockfish instalado ou de display.
 
 ```bash
-# Da raiz de projeto_final/
+# Da raiz do repositório
 python tests/run_all.py
 
 # Ou uma suíte de cada vez
