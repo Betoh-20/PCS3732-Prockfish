@@ -74,7 +74,7 @@ LICHESS_OPTS   = --mode lichess --lichess-time $(LICHESS_TIME) \
                  --lichess-timeout $(LICHESS_TIMEOUT)
 
 .PHONY: help stockfish lichess-ai random-sir lichess-user lichess-seek \
-        lichess-game mock test deps shell shell-classic check-token clean
+        lichess-game mock test deps shell shell-classic check-token clean pdf
 
 # ---------------------------------------------------------------------------
 #  Ajuda (alvo padrão)
@@ -95,6 +95,7 @@ help:
 	@echo '  make deps                          instala as dependências Python'
 	@echo '  make shell                         abre o devShell do Nix (nix-shell: make shell-classic)'
 	@echo '  make clean                         remove __pycache__ e caches'
+	@echo '  make pdf                           gera docs/Relatorio-1.pdf (requer pandoc)'
 	@echo ''
 	@echo 'Variáveis (make <alvo> VAR=valor):'
 	@echo '  COLOR=$(COLOR)  LOG_LEVEL=$(LOG_LEVEL)  ARGS=...'
@@ -173,5 +174,44 @@ shell-classic:
 clean:
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +
 	rm -rf .pytest_cache .mypy_cache .ruff_cache
+
+# ---------------------------------------------------------------------------
+#  Documentação
+# ---------------------------------------------------------------------------
+
+# Gera o PDF do relatório a partir de docs/Relatorio-1.md.
+# Requer pandoc e mermaid-filter (npm install -g mermaid-filter) ou
+# pandoc com suporte a mermaid via --filter mermaid-filter.
+#
+#   make pdf
+#
+REPORT_SRC  := docs/Relatorio-1.md
+REPORT_PDF  := docs/Relatorio-1.pdf
+
+DIAGRAMS_SRC = $(wildcard docs/diagramas/*.mmd)
+DIAGRAMS_PNG = $(DIAGRAMS_SRC:.mmd=.png)
+
+docs/diagramas/%.png: docs/diagramas/%.mmd
+	mmdc -i $< -o $@ -b white -s 4
+
+pdf: $(DIAGRAMS_PNG) $(REPORT_PDF)
+
+$(REPORT_PDF): $(REPORT_SRC) $(DIAGRAMS_PNG) docs/header.tex
+	pandoc $(REPORT_SRC) \
+	  -o $(REPORT_PDF) \
+	  --pdf-engine=xelatex \
+	  -H docs/header.tex \
+	  -V geometry:margin=2.5cm \
+	  -V fontsize=12pt \
+	  -V mainfont="DejaVu Sans" \
+	  -V monofont="DejaVu Sans Mono" \
+	  -V lang=pt-BR \
+	  --highlight-style=tango \
+	  --toc \
+	  -V toc-title="Sumário" \
+	  --metadata title="Tabuleiro de Xadrez Eletrônico com Integração a Chess Engine" \
+	  --metadata author="PCS3732 — Laboratório de Processadores" \
+	  --metadata date="Julho 2026"
+	@echo "PDF gerado: $(REPORT_PDF)"
 
 .DEFAULT_GOAL := help

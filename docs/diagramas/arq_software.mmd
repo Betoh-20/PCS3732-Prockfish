@@ -1,0 +1,41 @@
+graph TB
+    subgraph HW["Hardware"]
+        MAG["Peças com Ímã"]
+        RS["Matriz 8×8 Reed Switches"]
+        DIODE["Diodos Anti-Ghosting"]
+        GPIO["GPIO Raspberry Pi"]
+    end
+
+    subgraph LOW["Low-Level — Processo C"]
+        SCAN["Varredura"]
+        DEB["Debouncing"]
+        DIFF["Detecção de Diff"]
+        SER["Serialização/IPC"]
+    end
+
+    subgraph APP["Aplicação — Python"]
+        IPC_PY["Módulo IPC"]
+        STATE["Motor de Estado"]
+        VALID["Validação"]
+        ENGINE["Interface UCI"]
+        LICHESS["Lichess Client"]
+        GUI["GUI"]
+    end
+
+    MAG -->|magnético| RS
+    RS --- DIODE
+    DIODE --> GPIO
+    GPIO --> SCAN
+    SCAN --> DEB
+    DEB --> DIFF
+    DIFF --> SER
+    SER -->|Named Pipe| IPC_PY
+    IPC_PY --> STATE
+    STATE --> VALID
+    VALID --> ENGINE
+    VALID --> LICHESS
+    STATE --> GUI
+
+    style HW fill:#1a1a2e,stroke:#e94560,color:#fff
+    style LOW fill:#16213e,stroke:#0f3460,color:#fff
+    style APP fill:#0f3460,stroke:#53a8b6,color:#fff

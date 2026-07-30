@@ -1,0 +1,9 @@
+sequenceDiagram
+    actor U as Jogador
+    participant HW as HW + C
+    participant App as Python
+
+    U->>HW: Movimento ilegal
+    HW->>App: Evento
+    App->>App: Validação falha
+    App-->>U: GUI: reposicione a peça

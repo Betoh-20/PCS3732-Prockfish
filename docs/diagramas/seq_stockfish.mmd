@@ -1,0 +1,11 @@
+sequenceDiagram
+    actor U as Jogador
+    participant HW as HW + C
+    participant App as Python
+
+    U->>HW: Move peça
+    HW->>HW: Varredura + debounce
+    HW->>App: e2:0,e4:1
+    App->>App: Valida + atualiza GUI
+    App->>App: Stockfish: position+go
+    App->>App: Aplica bestmove + GUI

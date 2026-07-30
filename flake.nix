@@ -34,6 +34,19 @@
             fontDirectories = [ pkgs.dejavu_fonts pkgs.freefont_ttf pkgs.liberation_ttf ];
           };
 
+          # make pdf: pandoc + xelatex + mermaid-filter.
+          # Monta um texlive mínimo com xetex e as fontes que o relatório usa.
+          texlive = pkgs.texlive.combine {
+            inherit (pkgs.texlive)
+              scheme-small          # base LaTeX
+              collection-xetex      # xelatex
+              collection-fontsrecommended
+              collection-langenglish
+              collection-langportuguese
+              adjustbox             # docs/header.tex: redimensiona imagens do mermaid
+              collectbox;           # dependência do adjustbox
+          };
+
           prockfish = pkgs.mkShell {
             name = "prockfish";
 
@@ -42,6 +55,11 @@
               pkgs.stockfish
               # Makefile: atalhos para os modos de execução.
               pkgs.gnumake
+
+              # make pdf: geração do relatório em PDF.
+              pkgs.pandoc
+              texlive
+              pkgs.mermaid-cli              # mmdc (renderiza diagramas Mermaid)
             ];
 
             FONTCONFIG_FILE = fontsConf;

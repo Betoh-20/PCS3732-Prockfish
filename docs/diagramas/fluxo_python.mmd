@@ -1,0 +1,21 @@
+flowchart TD
+    A([Início]) --> B[Inicializa Board]
+    B --> C{Modo?}
+    C -->|SF| D[Inicia Stockfish]
+    C -->|Lichess| E[Conecta API]
+    D --> F[Abre IPC]
+    E --> F
+    F --> G{Turno?}
+    G -->|Jogador| H[Aguarda sensor]
+    H --> I[Interpreta]
+    I --> K{Válido?}
+    K -->|Não| L[Erro na GUI] --> H
+    K -->|Sim| N[Aplica + GUI]
+    N --> P{Fim?}
+    P -->|Sim| Q([Resultado])
+    P -->|Não| R{Modo?}
+    R -->|SF| S[Engine calcula]
+    R -->|Lichess| W[Envia API]
+    S --> V[Aplica resposta + GUI] --> G
+    W --> X[Aguarda stream] --> V
+    G -->|Oponente| R

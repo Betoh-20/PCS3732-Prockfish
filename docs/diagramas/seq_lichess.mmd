@@ -1,0 +1,12 @@
+sequenceDiagram
+    actor U as Jogador
+    participant App as Python
+    participant LI as Lichess
+
+    U->>App: Evento do sensor
+    App->>App: Valida + GUI
+    App->>LI: POST move
+    LI-->>App: 200 OK
+    Note over LI: Oponente joga
+    LI-->>App: Stream gameState
+    App->>App: Aplica + GUI

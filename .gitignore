@@ -43,3 +43,8 @@ result-*
 # Credenciais locais (token da Board API do Lichess)
 .lichess_token
 *.token
+
+# Pandoc / mermaid-filter (make pdf)
+docs/*.pdf
+mermaid-filter.err
+.mermaid-config.json

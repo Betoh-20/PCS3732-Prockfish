@@ -1,193 +1,242 @@
 # Tabuleiro de Xadrez Eletrônico com Integração a Chess Engine
 
-## 1. Motivação e Visão Geral do Projeto
+## 1. Motivação e Visão Geral
 
-O xadrez é tradicionalmente jogado de duas formas: presencialmente, sobre um tabuleiro físico, ou digitalmente, através de interfaces gráficas que permitem partidas contra outras pessoas ou contra motores de análise (chess engines). Cada modalidade tem vantagens que a outra não oferece — o tabuleiro físico proporciona a experiência tátil e sensorial do jogo tradicional, enquanto o ambiente digital abre acesso a oponentes virtuais de altíssimo nível, como o Stockfish, e a comunidades online, como o Lichess.
+O xadrez é tradicionalmente jogado de duas formas: presencialmente, sobre um tabuleiro físico, ou digitalmente, através de interfaces que permitem partidas contra motores de análise (*chess engines*). Este projeto une essas duas experiências: o jogador utiliza peças físicas reais sobre um tabuleiro instrumentado eletronicamente, enquanto o oponente — uma engine ou um jogador online — é representado apenas na interface gráfica.
 
-Este projeto nasce da vontade de unir essas duas experiências. A ideia central é permitir que um jogador utilize peças físicas reais, movimentando-as sobre um tabuleiro instrumentado eletronicamente, enquanto o "oponente" — seja ele uma engine de xadrez ou outro jogador humano conectado pela internet — existe apenas de forma virtual, sendo representado unicamente na interface gráfica do sistema. Dessa forma, o jogador físico interage com metade real e metade virtual do jogo, sem que isso comprometa a fluidez ou a legalidade das partidas.
-
-Para viabilizar essa proposta, o sistema precisa resolver três desafios centrais:
-
-1. **Detectar com precisão e rapidez** os movimentos realizados fisicamente no tabuleiro, sem exigir qualquer intervenção manual do jogador (como apertar botões ou usar um aplicativo à parte).
-2. **Traduzir essas detecções em jogadas válidas**, comunicando-as tanto para uma chess engine local (Stockfish) quanto, opcionalmente, para uma partida online (Lichess).
-3. **Refletir o estado completo do jogo** — as 32 peças, sendo 16 físicas e 16 virtuais — em uma interface gráfica clara e responsiva, mantendo o jogador sempre ciente da posição real da partida.
-
-A solução proposta combina sensoriamento eletromagnético, processamento em tempo real de baixo nível e uma camada de aplicação rica em lógica de jogo, formando um sistema robusto, preciso e de baixa latência.
+Para viabilizar essa proposta, o sistema precisa: (1) detectar com precisão os movimentos físicos sem intervenção manual; (2) traduzir essas detecções em jogadas válidas para o Stockfish ou para o Lichess; e (3) refletir o estado completo do jogo em uma GUI responsiva.
 
 ---
 
-## 2. Especificação de Requisitos
+## 2. Objetivos
 
-### 2.1 Requisitos Funcionais
+**Geral:** Projetar e implementar um tabuleiro de xadrez eletrônico que detecte movimentos de peças físicas e os comunique a uma chess engine ou à plataforma Lichess, exibindo o estado completo da partida em interface gráfica.
 
-| ID | Requisito | Critério de Teste | Resultado Esperado |
-|:---|:---------|:-------------------|:-------------------|
-| **RF1** | Detecção das peças de xadrez no tabuleiro físico e de seus movimentos. | Posicionar as peças no estado inicial e realizar uma série de movimentos válidos e capturas no tabuleiro físico. | O sistema deve identificar a presença física das peças, detectar o movimento ocorrido e registrar corretamente as coordenadas de origem e destino na lógica interna. |
-| **RF2** | Comunicação com uma chess engine que atue como oponente do jogador. | Enviar o estado atual do tabuleiro para a engine (via protocolo UCI) após a jogada do usuário físico. | A engine deve processar a posição atual, calcular a melhor resposta e retornar um movimento válido para o sistema. |
-| **RF3** | Exibição, em interface gráfica, de ambas as partes do jogo (peças físicas e virtuais). | Iniciar uma partida, efetuando jogadas no tabuleiro físico e aguardando a resposta da engine; observar a tela da aplicação. | A tela deve renderizar um tabuleiro virtual com todas as 32 peças, refletindo visualmente a posição exata das peças físicas e das virtuais. |
+**Específicos:**
 
-### 2.2 Requisitos Não-Funcionais
-
-| ID | Requisito | Critério de Teste | Resultado Esperado |
-|:---|:----------|:------------------|:-------------------|
-| **RNF1** | Detecção dos movimentos no tabuleiro de maneira rápida e sem falhas. | Executar 100 movimentos sequenciais (incluindo capturas e roque) no tabuleiro físico, avaliando o tempo de resposta dos sensores e a taxa de acerto. | 100% de precisão na detecção de qual peça foi movida e para onde, com tempo de leitura dos sensores inferior a 200 ms. |
-| **RNF2** | Representação das jogadas na interface gráfica sem latência considerável. | Medir o tempo decorrido (delay) entre o registro do movimento processado pelo sistema e a renderização do novo estado na tela. | A atualização visual do tabuleiro gráfico deve ocorrer com latência inferior a 100 ms após o gatilho, garantindo fluidez. |
-| **RNF3** | Robustez contra falsos positivos na leitura das peças (movimentos "fantasmas"). | Simular esbarrões leves no tabuleiro, trepidações ou passar a mão/peças rapidamente sobre as casas sem efetuar um movimento real. | O sistema deve filtrar ruídos e leituras temporárias, não registrando nenhum movimento espúrio na interface gráfica ou na engine. |
+1. Construir um tabuleiro 8×8 com reed switches e diodos anti-ghosting.
+2. Desenvolver firmware de varredura matricial com latência < 200 ms e 100% de precisão.
+3. Implementar interpretação de movimentos (capturas, roque, en passant, promoção).
+4. Integrar com Stockfish via protocolo UCI.
+5. Integrar com Lichess Board API para partidas online.
+6. Desenvolver GUI com Pygame que renderize as 32 peças em tempo real.
+7. Criar suíte de testes automatizados independente de hardware/rede/display.
 
 ---
 
-## 3. Arquitetura Proposta
+## 3. Ferramentas Utilizadas
 
-### 3.1 Visão Geral
-
-A arquitetura do sistema é organizada em três camadas — **Hardware/Sensoriamento**, **Controle Low-Level (C)** e **Aplicação/Interface (Python)** — interligadas por um mecanismo de comunicação interprocessos (IPC). Essa separação segue o princípio de *separation of concerns*: cada camada tem uma responsabilidade única e bem delimitada, o que facilita manutenção, testes isolados e evolução futura do sistema.
-
-O tabuleiro físico é instrumentado com uma matriz 8×8 de reed switches, sensores magnéticos que são ativados pela aproximação de ímãs embutidos nas peças do jogador. Um Raspberry Pi realiza a varredura contínua dessa matriz, processa as leituras em um processo dedicado escrito em C — responsável pela detecção de baixa latência — e repassa os eventos de movimento para um processo em Python, que mantém a lógica do jogo, valida jogadas, comunica-se com a engine Stockfish (ou com a API do Lichess, para partidas online) e renderiza a interface gráfica.
-
-### 3.2 Diagrama de Blocos
-
-```mermaid
-graph TB
-    subgraph HW["Camada de Hardware"]
-        MAG["Peças com Ímã"]
-        RS["Matriz 8×8 de Reed Switches"]
-        DIODE["Diodos Anti-Ghosting"]
-        MUX["Linhas/Colunas da Matriz"]
-        GPIO["GPIO Raspberry Pi"]
-    end
-
-    subgraph LOW["Camada Low-Level — Processo C"]
-        SCAN["Módulo de Varredura da Matriz"]
-        DEB["Módulo de Debouncing"]
-        DIFF["Módulo de Detecção de Diferenças"]
-        SER["Módulo de Serialização / IPC"]
-    end
-
-    subgraph APP["Camada de Aplicação — Processo Python"]
-        IPC_PY["Módulo IPC (Named Pipe / stdin)"]
-        STATE["Motor de Estado do Jogo"]
-        VALID["Validação de Movimentos"]
-        ENGINE["Interface UCI — Stockfish"]
-        LICHESS["Interface Lichess Board API"]
-        GUI["Interface Gráfica (GUI)"]
-    end
-
-    subgraph EXT["Serviços Externos"]
-        SF["Stockfish Engine"]
-        LI["Lichess API"]
-        MONITOR["Monitor / Display"]
-    end
-
-    MAG -->|"campo magnético"| RS
-    RS --- DIODE
-    DIODE --- MUX
-    MUX -->|"sinais elétricos"| GPIO
-    GPIO -->|"leitura digital"| SCAN
-    SCAN -->|"matriz 8×8 bool"| DEB
-    DEB -->|"matriz estável"| DIFF
-    DIFF -->|"evento de movimento"| SER
-
-    SER -->|"Named Pipe / stdout"| IPC_PY
-    IPC_PY -->|"movimento detectado"| STATE
-    STATE -->|"posição FEN"| VALID
-    VALID -->|"jogada válida"| ENGINE
-    VALID -->|"jogada válida"| LICHESS
-    ENGINE <-->|"UCI protocol"| SF
-    LICHESS <-->|"HTTP/Stream"| LI
-    STATE -->|"estado do tabuleiro"| GUI
-    GUI -->|"renderização"| MONITOR
-
-    style HW fill:#1a1a2e,stroke:#e94560,color:#fff
-    style LOW fill:#16213e,stroke:#0f3460,color:#fff
-    style APP fill:#0f3460,stroke:#53a8b6,color:#fff
-    style EXT fill:#1b1b2f,stroke:#e2b714,color:#fff
-```
-
-#### Descrição dos blocos
-
-| Bloco | Camada | Responsabilidade |
-|:------|:-------|:-----------------|
-| Peças com Ímã | Hardware | Peças de xadrez do jogador, cada uma com um ímã acoplado, que ativam os reed switches ao serem posicionadas |
-| Matriz 8×8 de Reed Switches | Hardware | Grade de 64 sensores magnéticos organizados em 8 linhas × 8 colunas |
-| Diodos Anti-Ghosting | Hardware | Diodos em série com cada reed switch para evitar caminhos de corrente parasitas (*ghosting*) quando múltiplas peças estão no tabuleiro simultaneamente |
-| GPIO Raspberry Pi | Hardware | Pinos de entrada/saída usados para ativar linhas e ler colunas |
-| Módulo de Varredura | C | Varre sequencialmente cada linha da matriz, ativando-a e lendo as 8 colunas, produzindo uma matriz booleana 8×8 |
-| Módulo de Debouncing | C | Aplica filtro temporal por amostragem consecutiva, exigindo estabilidade por N ciclos antes de confirmar uma mudança de estado |
-| Módulo de Detecção de Diferenças | C | Compara a matriz atual com a anterior e identifica as casas que mudaram de estado |
-| Módulo de Serialização/IPC | C | Formata e transmite as mudanças detectadas para o processo Python via Named Pipe ou `stdout` |
-| Módulo IPC Python | Python | Recebe dados do processo C, desserializa e entrega ao motor de estado |
-| Motor de Estado do Jogo | Python | Gerencia o estado interno do jogo (posição, turno, histórico), utilizando a biblioteca `python-chess` |
-| Validação de Movimentos | Python | Verifica se o movimento detectado é legal segundo as regras do xadrez |
-| Interface UCI — Stockfish | Python | Comunica-se com a engine Stockfish via protocolo UCI para obter jogadas do oponente virtual |
-| Interface Lichess Board API | Python | Conecta-se à API Board do Lichess para partidas online |
-| Interface Gráfica (GUI) | Python | Renderiza visualmente o tabuleiro completo (32 peças), mostrando tanto as peças físicas quanto as virtuais |
-
-### 3.3 Fluxo Principal de Execução
-
-O funcionamento do sistema pode ser resumido nas seguintes etapas, exemplificadas pelo cenário de uma partida contra o Stockfish:
-
-1. O jogador move uma peça física no tabuleiro (por exemplo, de e2 para e4).
-2. O processo C realiza a varredura contínua da matriz (ciclo de aproximadamente 10 ms), ativando cada linha e lendo o estado das colunas.
-3. O módulo de debouncing exige estabilidade da leitura por N ciclos consecutivos antes de confirmar qualquer mudança, evitando ruídos.
-4. O módulo de diferenças compara o estado atual com o anterior e identifica exatamente quais casas mudaram (e2 desativada, e4 ativada).
-5. O evento de movimento é serializado e enviado ao processo Python via Named Pipe.
-6. O processo Python interpreta o evento, valida a jogada com `python-chess` e atualiza o estado interno do jogo.
-7. A interface gráfica é atualizada para refletir a jogada do jogador.
-8. A posição atual é enviada ao Stockfish via protocolo UCI; a engine calcula e retorna a melhor jogada.
-9. O sistema aplica a jogada da engine ao estado interno e atualiza novamente a interface gráfica, exibindo a resposta do oponente virtual.
-
-Um fluxo análogo ocorre no modo online via Lichess Board API, onde a jogada do jogador é enviada por uma requisição HTTP e a jogada do oponente humano chega através de um *stream* de eventos. Movimentos identificados como ilegais pela validação em Python são rejeitados e o jogador é notificado na interface gráfica para reposicionar a peça corretamente.
-
-### 3.4 Mapeamento entre Requisitos e Arquitetura
-
-A tabela a seguir demonstra como cada requisito especificado é atendido por mecanismos concretos da arquitetura.
-
-| Requisito | Mecanismo Arquitetural |
-|:----------|:------------------------|
-| **RF1** — Detecção de peças e movimentos | Varredura matricial (Matriz de Reed Switches → GPIO → Módulo de Varredura → Módulo de Diff) identifica as casas que mudaram de estado, determinando origem e destino de cada movimento. A identificação do *tipo* de peça é feita pelo software, que mantém um mapa lógico atualizado incrementalmente. |
-| **RF2** — Comunicação com chess engine | A biblioteca `python-chess` encapsula o protocolo UCI, enviando a posição atual (FEN + histórico) ao Stockfish via `stdin`/`stdout` e recebendo a melhor jogada calculada. |
-| **RF3** — Exibição gráfica de ambas as partes | O Motor de Estado mantém a representação canônica do tabuleiro; a GUI a consulta para renderizar as 32 peças, atualizando as peças do jogador conforme os sensores e as do oponente conforme a engine ou o stream do Lichess. |
-| **RNF1** — Detecção rápida e sem falhas (<200 ms) | Ciclo de varredura de ~10 ms para as 8 linhas somado a debouncing de 5 ciclos resulta em latência total estimada de 50–60 ms, bem abaixo do limite exigido. Diodos anti-ghosting garantem leitura precisa com múltiplas peças simultâneas. |
-| **RNF2** — GUI sem latência considerável (<100 ms) | A comunicação via Named Pipe entre processos no mesmo Raspberry Pi ocorre em microssegundos; a renderização incremental (redesenho apenas das casas alteradas) mantém a atualização visual em poucos milissegundos. |
-| **RNF3** — Robustez contra falsos positivos | Dupla barreira de proteção: debouncing em C (exige N leituras consecutivas idênticas) e validação semântica em Python (descarta transições que não correspondem a jogadas legais). |
-
-### 3.5 Justificativas das Principais Decisões Arquiteturais
-
-**Separação em dois processos (C e Python).** O C foi escolhido para a camada de hardware por oferecer controle direto sobre GPIOs com temporização precisa, essencial à varredura matricial em tempo real. O Python foi escolhido para a camada de aplicação pela disponibilidade da biblioteca `python-chess`, que já oferece representação de estado, validação de regras e integração nativa com engines UCI — evitando reimplementar essa lógica em C.
-
-**Comunicação via Named Pipe (FIFO).** Trata-se de um mecanismo de IPC nativo do Linux que equilibra simplicidade de implementação e desempenho adequado, já que os eventos transmitidos são curtos e esporádicos. Alternativas como memória compartilhada ou sockets Unix foram descartadas por adicionarem complexidade desnecessária para esse volume de dados.
-
-**Varredura matricial com diodos anti-ghosting.** A técnica permite ler 64 sensores utilizando apenas 16 pinos GPIO (8 linhas + 8 colunas), reduzindo a fiação necessária. Os diodos em série evitam que múltiplos switches fechados simultaneamente — situação comum, já que até 16 peças do jogador podem estar no tabuleiro ao mesmo tempo — gerem leituras falsas por caminhos de corrente parasitas.
-
-**Debouncing por amostragem consecutiva em software.** Preferido ao debouncing por hardware (filtro RC) por três razões: economia de componentes (evita 64 pares de resistor/capacitor adicionais), flexibilidade (o limiar de estabilidade é ajustável por software) e adequação ao cenário, já que o Raspberry Pi tem capacidade de processamento suficiente para executar essa filtragem sem impacto perceptível de desempenho.
-
-**Protocolo UCI para comunicação com o Stockfish.** O UCI é o padrão de fato para engines modernas, com natureza *stateless* e baseada em texto que simplifica a integração. O Stockfish, reconhecidamente a engine open-source mais forte disponível, utiliza UCI nativamente.
-
-**Lichess Board API para jogos online.** Diferentemente da Bot API (voltada a contas automatizadas), a Board API foi projetada especificamente para permitir que tabuleiros físicos externos interajam com a plataforma usando contas regulares, o que se adequa diretamente ao caso de uso deste projeto.
-
-**Renderização incremental na interface gráfica.** Redesenhar apenas as casas cujo estado mudou, em vez do tabuleiro inteiro a cada atualização, é uma técnica padrão para minimizar o tempo de resposta visual, contribuindo diretamente para o cumprimento do requisito de latência inferior a 100 ms.
+| Categoria | Item | Uso |
+|:----------|:-----|:----|
+| Linguagem | **Python 3.10+** | Lógica de jogo, validação, engines, API, GUI |
+| Linguagem | **C/C++ (Arduino)** | Firmware de varredura da matriz de sensores |
+| Linguagem | **Nix / Make** | Ambiente reprodutível e automação |
+| Biblioteca | **python-chess** ≥ 1.10 | Estado do tabuleiro, validação, interface UCI |
+| Biblioteca | **Pygame** ≥ 2.5 | Renderização da GUI |
+| Biblioteca | **Requests** ≥ 2.31 | Comunicação HTTP com Lichess Board API |
+| Externo | **Stockfish** | Chess engine (UCI) |
+| Externo | **Lichess Board API** | Partidas online com tabuleiros físicos |
+| Externo | **SimulIDE** | Simulação do circuito eletrônico |
+| Hardware | **Reed switches** (64×) | Sensores magnéticos, 1 por casa |
+| Hardware | **Diodos 1N4148** (64×) | Anti-ghosting |
+| Hardware | **Ímãs neodímio** ⌀6 mm (16×) | Embutidos nas peças do jogador |
+| Hardware | **Arduino Mega 2560** (PoC) | Microcontrolador da prova de conceito |
+| Hardware | **Raspberry Pi 4** (final) | Controlador da versão final |
 
 ---
 
-## 4. Desenvolvimento
+## 4. Metodologia de Desenvolvimento
 
-Para a primeira semana, o grupo concentrou seus esforços em desenvolver uma prototipação do projeto. O objetivo foi criar um protótipo da lógica de detecção de movimentos das peças, conectado ao sistema do Lichess.
+Ciclo **iterativo e incremental** organizado em entregas semanais. Repositório único com branch `main`; a partir da Semana 2, branches dedicadas com integração via Pull Request.
 
-Foram implementados módulos em Python que organizam o fluxo completo do sistema, desde a leitura dos eventos do tabuleiro até a interação com a engine e a interface gráfica. O código foi estruturado para separar responsabilidades e facilitar a validação de jogadas, a comunicação com serviços externos e a apresentação visual do estado do jogo.
+**Validação em camadas:**
 
-No lado de hardware, um programa simples para testar se a montagem física com os reed switches estava funcional também foi feita, validando a viabilidade técnica da construção.
+1. **Testes automatizados** (`tests/`): lógica de aplicação, sem hardware/rede/display. Servidor HTTP falso e mocks de IPC/engine.
+2. **PoC de hardware** (`poc_xadrez/`): sketch Arduino validando varredura matricial com reed switches.
+3. **Mock de hardware** (`mock/`): simulador gráfico que emula eventos de sensores.
+4. **Sondas de integração** (`tests/probe_*.py`): validação contra a API real do Lichess.
 
-- app/main.py: ponto de entrada da aplicação, responsável por orquestrar o fluxo principal, os modos de execução e o ciclo de funcionamento do sistema.
-- app/game_state.py: motor de estado do jogo, baseado na biblioteca python-chess, responsável por manter a posição, aplicar movimentos e gerar informações como FEN e histórico.
-- app/move_interpreter.py: interpreta mudanças detectadas nos sensores e converte-as em jogadas de xadrez, tratando casos como captura, roque e promoção.
-- app/ipc_reader.py: recebe eventos vindos do processo C ou de mocks, desserializa as alterações do tabuleiro e entrega o conteúdo ao restante da aplicação.
-- app/gui.py: implementa a interface gráfica com pygame, exibindo o tabuleiro virtual, destaque de movimentos e mensagens de status.
-- app/stockfish_engine.py: integra a aplicação com o Stockfish via protocolo UCI, permitindo respostas automáticas do oponente virtual.
-- app/lichess_client.py: conecta o sistema à Board API do Lichess para partidas online com jogadores humanos ou IA.
-- poc_xadrez/poc_xadrez.ino e mock/: concentram a base de prova de conceito para o hardware e os testes de simulação do sistema.
+Documentação com **docstrings em padrão Google** em todos os módulos Python, relatório em Markdown com exportação para PDF via Pandoc.
 
-## 5. Considerações Finais
+---
 
-A arquitetura proposta busca equilibrar dois objetivos que, à primeira vista, podem parecer conflitantes: a baixíssima latência exigida pelo sensoriamento físico e a riqueza de lógica necessária para validar e apresentar uma partida de xadrez completa. A divisão em camadas — com um processo em C dedicado exclusivamente ao hardware e um processo em Python dedicado à lógica de aplicação — permite que cada parte do sistema seja otimizada para seu propósito específico, sem comprometer a responsividade nem a corretude das regras do jogo.
+## 5. Especificação de Requisitos
 
-O resultado é um sistema capaz de detectar jogadas físicas com alta precisão e baixa latência, comunicar-se de forma transparente com uma chess engine de referência mundial ou com uma plataforma online consolidada, e apresentar ao jogador uma visão completa e sincronizada da partida — unindo, assim, a experiência tátil do xadrez tradicional à conectividade e ao poder analítico do xadrez digital.
+### 5.1 Requisitos Funcionais
+
+| ID | Requisito | Critério de Teste |
+|:---|:---------|:------------------|
+| **RF1** | Detecção das peças no tabuleiro físico e de seus movimentos. | Realizar movimentos válidos e capturas; o sistema deve registrar corretamente origem e destino. |
+| **RF2** | Comunicação com chess engine como oponente. | Enviar estado via UCI após jogada; a engine deve retornar movimento válido. |
+| **RF3** | Exibição gráfica de ambas as partes (peças físicas e virtuais). | A tela deve renderizar 32 peças refletindo a posição exata. |
+
+### 5.2 Requisitos Não-Funcionais
+
+| ID | Requisito | Critério de Teste |
+|:---|:----------|:------------------|
+| **RNF1** | Detecção rápida e sem falhas. | 100 movimentos sequenciais: 100% precisão, leitura < 200 ms. |
+| **RNF2** | GUI sem latência considerável. | Latência de renderização < 100 ms após o gatilho. |
+| **RNF3** | Robustez contra falsos positivos. | Esbarrões e trepidações não devem gerar movimentos espúrios. |
+
+---
+
+## 6. Arquitetura Proposta
+
+### 6.1 Visão Geral
+
+Três camadas — **Hardware/Sensoriamento**, **Controle Low-Level (C)** e **Aplicação (Python)** — interligadas por IPC. O tabuleiro é instrumentado com uma matriz 8×8 de reed switches. Um processo C dedicado realiza varredura e debouncing; um processo Python mantém a lógica do jogo, valida jogadas, comunica-se com Stockfish/Lichess e renderiza a GUI.
+
+### 6.2 Diagrama de Blocos — Arquitetura de Software
+
+![arq_software](docs/diagramas/arq_software.png){height=80%}
+
+### 6.3 Arquitetura Física
+
+![arq_fisica](docs/diagramas/arq_fisica.png){height=80%}
+
+| Conexão | Detalhes |
+|:--------|:---------|
+| Switches → MCU | 8 linhas OUTPUT LOW + 8 colunas INPUT_PULLUP. Diodo 1N4148 em série anti-ghosting. |
+| Arduino → Host (PoC) | Serial UART 115200 baud via USB. Matriz 8×8 booleana em texto. |
+| RPi GPIO → Proc. C (final) | Acesso direto via `pigpio` ou registradores, sem overhead de serial. |
+| Proc. C → Proc. Python | Named Pipe (FIFO). Eventos tipo `e2:0,e4:1`. Latência ~µs. |
+| Python → Stockfish | stdin/stdout, protocolo UCI. |
+| Python → Lichess | HTTPS REST + NDJSON streaming (Board API). |
+
+### 6.4 Diagramas de Sequência
+
+#### 6.4.1 Jogada contra Stockfish
+
+![seq_stockfish](docs/diagramas/seq_stockfish.png){height=80%}
+
+#### 6.4.2 Jogada Online via Lichess
+
+![seq_lichess](docs/diagramas/seq_lichess.png){height=80%}
+
+#### 6.4.3 Rejeição de Movimento Inválido
+
+![seq_invalido](docs/diagramas/seq_invalido.png){height=80%}
+
+### 6.5 Fluxograma — Lógica Principal (Python)
+
+![fluxo_python](docs/diagramas/fluxo_python.png){height=80%}
+
+### 6.6 Mapeamento Requisitos × Arquitetura
+
+| Requisito | Mecanismo |
+|:----------|:----------|
+| **RF1** | Varredura matricial → GPIO → Diff identifica casas alteradas. Tipo da peça mantido por mapa lógico no software. |
+| **RF2** | `python-chess` encapsula UCI: envia FEN + histórico ao Stockfish, recebe `bestmove`. |
+| **RF3** | Motor de Estado mantém representação canônica; GUI renderiza 32 peças consultando-o. |
+| **RNF1** | Ciclo ~10 ms + debouncing 5 ciclos ≈ 50–60 ms (< 200 ms). Diodos anti-ghosting. |
+| **RNF2** | Named Pipe (~µs) + renderização incremental (só casas alteradas). |
+| **RNF3** | Dupla barreira: debouncing em C + validação semântica em Python. |
+
+### 6.7 Justificativas Arquiteturais
+
+| Decisão | Justificativa |
+|:--------|:-------------|
+| **Dois processos (C + Python)** | C oferece controle direto de GPIO com temporização precisa; Python dispõe de `python-chess` para validação e UCI. |
+| **Named Pipe (FIFO)** | IPC nativo do Linux, simples e adequado para eventos curtos e esporádicos. |
+| **Varredura matricial + diodos** | 64 sensores com apenas 16 pinos GPIO. Diodos previnem ghosting com múltiplas peças. |
+| **Debouncing em software** | Evita 128 componentes extras (RC); threshold ajustável; RPi tem capacidade de sobra. |
+| **UCI / Stockfish** | Padrão de facto, stateless, baseado em texto. Stockfish é a engine open-source mais forte. |
+| **Lichess Board API** | Projetada para tabuleiros físicos com contas regulares (diferente da Bot API). |
+| **Renderização incremental** | Redesenha apenas casas alteradas, garantindo < 100 ms de latência visual. |
+
+---
+
+## 7. Desenvolvimento
+
+Na primeira semana, o grupo focou na prototipação: lógica de detecção de movimentos conectada ao Lichess e ao Stockfish, com GUI funcional.
+
+**Módulos implementados:**
+
+| Módulo | Responsabilidade |
+|:-------|:----------------|
+| `app/main.py` | Ponto de entrada, orquestração dos modos de execução |
+| `app/game_state.py` | Motor de estado (python-chess): posição, FEN, histórico |
+| `app/move_interpreter.py` | Converte eventos de sensor em jogadas (captura, roque, promoção) |
+| `app/ipc_reader.py` | Recebe e desserializa eventos do processo C / mocks |
+| `app/gui.py` | Interface gráfica com Pygame |
+| `app/stockfish_engine.py` | Integração UCI com Stockfish |
+| `app/lichess_client.py` | Board API do Lichess (seek, desafios, streams) |
+| `app/config.py` | Configuração centralizada |
+| `poc_xadrez/poc_xadrez.ino` | Firmware Arduino: varredura matricial + Serial |
+| `mock/hardware_mock.py` | Simulador de eventos de sensores |
+
+---
+
+## 8. Testes
+
+### 8.1 Suíte Automatizada
+
+Executável com `make test`. Sem dependência de rede, token, Stockfish ou display.
+
+| Suíte | Arquivo | Cenários | Cobertura |
+|:------|:--------|:--------:|:----------|
+| Lichess | `test_lichess.py` | 35 | Auth, seek, streams, tempo, cor, sinc. lances, recusa, threads |
+| Desafios | `test_challenge.py` | 5 | Criação, aceite, rejeição, cancelamento, user inexistente |
+| Stockfish | `test_stockfish_loop.py` | 5 | Partida completa, captura→instrução física, ressincronização |
+| **Total** | | **45** | |
+
+**Infraestrutura:** `fake_lichess.py` — servidor HTTP que imita a Board API (account, seek, streams, lances, desafios). Aceita token `faketoken123`, recusa inválidos (401).
+
+### 8.2 Rastreabilidade Requisito × Teste
+
+| Req. | Validação | Status |
+|:-----|:----------|:-------|
+| **RF1** | `test_stockfish_loop`: eventos de sensor → movimentos corretos. Mock visual. | SW ✅ · HW pendente |
+| **RF2** | `test_stockfish_loop`: engine falsa retorna bestmove, estado consistente. | SW ✅ |
+| **RF3** | Mock com GUI (`make mock`): verificação visual da renderização. | Visual ✅ |
+| **RNF1** | 100% dos eventos simulados detectados. Latência real na Semana 3. | Precisão ✅ · Latência pendente |
+| **RNF2** | Instrumentação de timestamps prevista para Semana 3. | Pendente |
+| **RNF3** | Ressincronização após inconsistência testada. HW real na Semana 3. | SW ✅ |
+
+### 8.3 Testes Planejados
+
+| Semana | Teste | Requisito |
+|:-------|:------|:----------|
+| 2 | Cenários de roque, en passant e promoção no `move_interpreter` | RF1 |
+| 3 | Integração HW–SW: latência real + 100 movimentos sequenciais | RNF1, RNF3 |
+| 4 | Aceitação: partida completa (Stockfish + Lichess) com tabuleiro real | Todos |
+
+---
+
+## 9. Conclusões
+
+A primeira entrega atingiu seu objetivo: definir a arquitetura e validar a viabilidade técnica. A PoC de hardware confirmou a varredura matricial com reed switches; a aplicação Python está funcional de ponta a ponta (Stockfish e Lichess); e a suíte de 45 testes automatizados — com servidor HTTP falso e mocks — valida o software sem dependência externa.
+
+**Dificuldades:** engenharia reversa da Board API do Lichess (restrições não documentadas exigiram criação de sondas), equilíbrio debouncing vs. responsividade, e ghosting na matriz (resolvido com diodos).
+
+**Lições:** a separação em camadas viabilizou desenvolvimento paralelo e mocks; testes com servidor falso eliminaram dependência de rede; Nix garantiu reprodutibilidade do ambiente.
+
+**Próximos passos:** montagem física do tabuleiro (Semana 2), testes de integração HW–SW com medição de latência (Semana 3), teste de aceitação com partidas reais (Semana 4).
+
+---
+
+## 10. Referências
+
+BASS, L.; CLEMENTS, P.; KAZMAN, R. **Software Architecture in Practice**. 3. ed. Boston: Addison-Wesley, 2012.
+
+DIGIKEY. **Debouncing reed switches in embedded systems**. DigiKey Technical Articles, 2023. Disponível em: https://www.digikey.com/en/articles/how-to-implement-hardware-debounce-for-switches-and-relays. Acesso em: 16 jul. 2026.
+
+FIEKAS, N. **python-chess: a chess library for Python**. Documentação oficial, 2024. Disponível em: https://python-chess.readthedocs.io/en/latest/engine.html. Acesso em: 16 jul. 2026.
+
+GANSSLE, J. **A Guide to Debouncing**. The Ganssle Group, 2008. Disponível em: http://www.ganssle.com/debouncing.htm. Acesso em: 16 jul. 2026.
+
+GREGORY, J. **Game Engine Architecture**. 3. ed. Boca Raton: CRC Press, 2018.
+
+HOROWITZ, P.; HILL, W. **The Art of Electronics**. 3. ed. Cambridge: Cambridge University Press, 2015.
+
+KERRISK, M. **The Linux Programming Interface**. San Francisco: No Starch Press, 2010.
+
+LICHESS. **Lichess API Reference — Board API**. 2024. Disponível em: https://lichess.org/api#tag/Board. Acesso em: 16 jul. 2026.
+
+MEYER-KAHLEN, S. **UCI Protocol Specification**. Shredder Chess, 2000. Disponível em: https://www.shredderchess.com/chess-features/uci-universal-chess-interface.html. Acesso em: 16 jul. 2026.
+
+RASPBERRY PI FOUNDATION. **GPIO and the 40-pin Header**. 2024. Disponível em: https://www.raspberrypi.com/documentation/computers/os.html#gpio-and-the-40-pin-header. Acesso em: 16 jul. 2026.
+
+SCHERZ, P.; MONK, S. **Practical Electronics for Inventors**. 4. ed. New York: McGraw-Hill, 2016.
+
+STOCKFISH. **Stockfish — Open Source Chess Engine**. 2024. Disponível em: https://stockfishchess.org/. Acesso em: 16 jul. 2026.

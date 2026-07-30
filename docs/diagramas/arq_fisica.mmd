@@ -1,0 +1,29 @@
+graph LR
+    subgraph TAB["Tabuleiro"]
+        RS["64 Reed Switches +<br/>64 Diodos 1N4148"]
+        PECAS["16 Peças c/ Ímã"]
+    end
+
+    subgraph MCU["Microcontrolador"]
+        ARD["Arduino Mega (PoC)"]
+        RPI["Rasp. Pi 4 (final)"]
+    end
+
+    subgraph HOST["Host"]
+        C_PROC["Processo C"]
+        PY["Processo Python"]
+        DISP["Monitor HDMI"]
+    end
+
+    PECAS -.->|magnético| RS
+    RS -->|"8 linhas + 8 colunas"| ARD
+    ARD -->|"Serial 115200"| C_PROC
+    RPI -->|"GPIO direto"| C_PROC
+    C_PROC -->|Named Pipe| PY
+    PY --> DISP
+    PY <-->|UCI| SF["Stockfish"]
+    PY <-->|HTTPS| LI["Lichess"]
+
+    style TAB fill:#1a1a2e,stroke:#e94560,color:#fff
+    style MCU fill:#16213e,stroke:#0f3460,color:#fff
+    style HOST fill:#0f3460,stroke:#53a8b6,color:#fff
