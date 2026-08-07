@@ -3,7 +3,7 @@
 ## 1. Desenvolvimento de Software
 A partir do código desenvolvido na semana 1, o grupo adaptou a prova de conceito feita para Arduino para uma versão em C++ pronta para rodar diretamente na Raspberry Pi do laboratório, junto do programa em Python. Foi validada a leitura correta da matriz de reed switches pela Raspberry Pi.
 ### 1.1. Arquitetura em C++
-![arq_cpp](docs/diagramas/arq_cpp.png){height=80%}
+<img src="diagramas/arq_cpp.png" alt="arq_cpp">
 
 ---
 

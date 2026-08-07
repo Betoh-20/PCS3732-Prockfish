@@ -88,11 +88,11 @@ Três camadas — **Hardware/Sensoriamento**, **Controle Low-Level (C)** e **Apl
 
 ### 6.2 Diagrama de Blocos — Arquitetura de Software
 
-![arq_software](docs/diagramas/arq_software.png){height=80%}
+<img src="docs/diagramas/arq_software.png" alt="arq_software" width="80%">
 
 ### 6.3 Arquitetura Física
 
-![arq_fisica](docs/diagramas/arq_fisica.png){height=80%}
+<img src="docs/diagramas/arq_fisica.png" alt="arq_fisica" width="800">
 
 | Conexão | Detalhes |
 |:--------|:---------|
@@ -107,19 +107,19 @@ Três camadas — **Hardware/Sensoriamento**, **Controle Low-Level (C)** e **Apl
 
 #### 6.4.1 Jogada contra Stockfish
 
-![seq_stockfish](docs/diagramas/seq_stockfish.png){height=80%}
+<img src="diagramas/seq_stockfish.png" alt="seq_stockfish">
 
 #### 6.4.2 Jogada Online via Lichess
 
-![seq_lichess](docs/diagramas/seq_lichess.png){height=80%}
+<img src="diagramas/seq_lichess.png" alt="seq_lichess">
 
 #### 6.4.3 Rejeição de Movimento Inválido
 
-![seq_invalido](docs/diagramas/seq_invalido.png){height=80%}
+<img src="diagramas/seq_invalido.png" alt="seq_invalido">
 
 ### 6.5 Fluxograma — Lógica Principal (Python)
 
-![fluxo_python](docs/diagramas/fluxo_python.png){height=80%}
+<img src="diagramas/fluxo_python.png" alt="fluxo_python">
 
 ### 6.6 Mapeamento Requisitos × Arquitetura
 
