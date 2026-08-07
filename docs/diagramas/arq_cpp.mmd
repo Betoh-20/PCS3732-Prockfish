@@ -1,0 +1,40 @@
+flowchart TD
+    %% Inicialização
+    Start([Início do Programa]) --> SetupWiring{Inicializa WiringPi}
+    SetupWiring -- Falha --> Erro[Imprime Erro] --> FimErro([Fim - Erro 1])
+    SetupWiring -- Sucesso --> ConfigCols[Configura 8 Colunas<br>INPUT + PULL-UP]
+    
+    ConfigCols --> ConfigLines[Configura 8 Linhas<br>INPUT]
+    ConfigLines --> ClearMatrix[Zera as matrizes:<br>matrix e matrix_prev]
+    ClearMatrix --> MainLoop
+    
+    %% Loop Principal
+    subgraph Loop Infinito (while true)
+        direction TB
+        MainLoop([Início do Ciclo]) --> StartScan[Inicia Varredura das Linhas]
+        
+        StartScan --> LineLoop[Para cada linha (0 a 7):]
+        LineLoop --> SetOut[Linha atual: OUTPUT LOW]
+        SetOut --> Wait5us[Delay 5us]
+        Wait5us --> ReadCols[Lê estado das 8 colunas<br>Salva na matrix atual]
+        ReadCols --> SetIn[Linha atual: Volta para INPUT]
+        SetIn --> CheckLines{Lê todas<br>as linhas?}
+        CheckLines -- Não --> LineLoop
+        CheckLines -- Sim --> CheckChanges[Verifica Alterações]
+        
+        CheckChanges --> Compare{matrix != matrix_prev ?}
+        
+        Compare -- Sim --> Print[Imprime posições alteradas no terminal]
+        Print --> Update[Atualiza matrix_prev = matrix]
+        Update --> DelayLoop[Delay de 10ms]
+        
+        Compare -- Não --> DelayLoop
+        
+        DelayLoop --> MainLoop
+    end
+    
+    classDef init fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef loop fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    
+    class SetupWiring,ConfigCols,ConfigLines,ClearMatrix init;
+    class LineLoop,SetOut,Wait5us,ReadCols,SetIn,CheckChanges,Compare,Print,Update loop;
