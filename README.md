@@ -153,8 +153,10 @@ Detalhes que o menu resolve sozinho:
   compilador direto quando não há `make` na máquina);
 - **mostra o comando equivalente** (`make ...` ou `python -m app.main ...`),
   para repetir a mesma partida pelo terminal;
-- **volta ao fim de cada partida**, para escolher a próxima sem reabrir o
-  programa.
+- **volta quando a partida acaba** — nas [opções da
+  partida](#opções-durante-a-partida), "Voltar ao menu" traz o jogador de
+  volta para escolher a próxima sem reabrir o programa; "Sair" (ou fechar a
+  janela) encerra a aplicação.
 
 Sem display (por SSH, por exemplo) o mesmo menu aparece como uma lista
 numerada no terminal.
@@ -294,6 +296,31 @@ Opções:
 
 O tabuleiro é desenhado da perspectiva do jogador físico: com `--color black`
 as pretas já ficam embaixo, e `--flip` inverte essa orientação padrão.
+
+### Opções durante a partida
+
+Com a partida em andamento, `Esc` (ou um toque na barra de status) abre o menu
+de ações sobre o tabuleiro:
+
+| Ação | Quando aparece | O que faz |
+|------|----------------|-----------|
+| **Reiniciar partida** | modo Stockfish | Volta à posição inicial e recomeça, mantendo cor e camada de entrada |
+| **Abortar partida** | Lichess, antes de os dois lados jogarem | `abort` na Board API — ninguém perde |
+| **Oferecer / Aceitar empate** | Lichess | Propõe empate, ou aceita o que o oponente propôs |
+| **Desistir** | partida em andamento | Encerra a partida; no Lichess, manda `resign` |
+| **Voltar ao menu** | sempre | Encerra a partida e volta ao menu de configuração |
+| **Sair** | sempre | Fecha a aplicação |
+
+Enquanto a partida está viva, essas ações pedem confirmação — num tabuleiro
+operado por toque, um encostão não pode custar a partida. Depois do fim da
+partida o menu abre sozinho, sem confirmação, com o que ainda faz sentido:
+jogar de novo, voltar ao menu ou sair.
+
+Uma proposta de empate feita pelo oponente aparece na barra de status e vira
+"Aceitar empate" no menu; antes era preciso responder pelo site do Lichess.
+
+Reiniciar não mexe no que os sensores estão lendo — a instrução da barra de
+status passa a pedir as peças que faltam para montar a posição inicial.
 
 ### Jogar contra Lichess (online)
 
@@ -819,9 +846,18 @@ etapas](#roque-em-duas-etapas).
 
 | Tecla | Ação |
 |-------|------|
+| `ESC` | Abre as [opções da partida](#opções-durante-a-partida) (fecha a janela durante as esperas) |
 | `F` | Inverter tabuleiro |
-| `ESC` | Fechar aplicação |
 | `Q/R/B/N` | Selecionar peça de promoção |
+
+### Opções da partida (menu aberto)
+
+| Tecla | Ação |
+|-------|------|
+| `↑` `↓` | Escolher a ação |
+| `Enter` | Acionar (ações sem volta pedem confirmação) |
+| `S` / `N` | Responder ao "tem certeza?" |
+| `ESC` | Fechar o menu |
 
 ### GUI do mock (matriz de botões)
 

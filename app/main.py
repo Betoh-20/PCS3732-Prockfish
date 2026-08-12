@@ -52,6 +52,15 @@ logger = logging.getLogger(__name__)
 REASON_ILLEGAL = "ilegal"      # o lance foi recusado pelas regras do xadrez
 REASON_BLOCKED = "bloqueado"   # o lance foi feito com o tabuleiro fora da posição
 
+# Ações do menu da partida. As duas últimas dizem também como a aplicação
+# termina: voltando ao menu de configuração ou fechando de vez.
+ACTION_RESTART = "restart"
+ACTION_RESIGN = "resign"
+ACTION_ABORT = "abort"
+ACTION_DRAW = "draw"
+ACTION_MENU = "menu"
+ACTION_QUIT = "quit"
+
 # Como o `status` de fim de partida do Lichess é apresentado ao jogador.
 # Um status ausente ou "started" significa partida em andamento.
 LICHESS_STATUS_LABELS = {
@@ -181,6 +190,11 @@ class ChessApplication:
         self._running = False
         self.physical_board_state = self.game_state.get_expected_sensor_state()
 
+        # Como a aplicação terminou, para quem a chamou decidir o que vem
+        # depois: ACTION_QUIT fecha o programa, ACTION_MENU volta ao menu de
+        # configuração. Fechar a janela é sair.
+        self.exit_reason = ACTION_QUIT
+
         # Fim de partida que o tabuleiro virtual sozinho não tem como deduzir:
         # decidido pelo servidor (desistência, tempo) ou por falha da engine.
         self._end_reason: Optional[str] = None
@@ -190,6 +204,13 @@ class ChessApplication:
         # severidade. Vazia quando o tabuleiro está sincronizado.
         self._board_message = ""
         self._board_message_type = "info"
+
+        # Aviso passageiro sobre uma ação do jogador ("Empate oferecido").
+        # Precisa de canal próprio: a instrução do tabuleiro é recalculada a
+        # cada volta do loop e apagaria qualquer coisa escrita nela.
+        self._notice = ""
+        self._notice_type = "info"
+        self._notice_until = 0.0
 
         # Histórico de peças fora do lugar: {casa_atual: MisplacedPiece}.
         # Enquanto não estiver vazio, novos lances são bloqueados. A ordem de
@@ -284,6 +305,12 @@ class ChessApplication:
                     if not self.gui.handle_events():
                         logger.info("Usuário fechou a janela.")
                         break
+                    # As ações do menu (desistir, reiniciar...) dependem do
+                    # estado da partida, então a lista é refeita a cada volta.
+                    self.gui.set_actions(self._game_actions())
+                    self._drain_gui_actions()
+                    if not self._running:
+                        break
 
                 # Eventos vindos do Lichess (jogadas do oponente, fim de
                 # partida) chegam a qualquer momento, não só no turno dele.
@@ -295,8 +322,10 @@ class ChessApplication:
                     result = self._end_reason or self.game_state.get_result()
                     self._refresh_gui(result, self._end_message_type)
                     logger.info("Fim de jogo: %s", result)
-                    # Mantém a janela aberta até o usuário fechar
-                    self._wait_for_close()
+                    # A janela fica aberta com as opções de fim de partida;
+                    # dali o jogador pode começar outra sem sair do programa.
+                    if self._wait_after_game():
+                        continue
                     break
 
                 # O tabuleiro físico é lido sempre, inclusive fora do turno do
@@ -319,11 +348,142 @@ class ChessApplication:
             self.stop()
 
     def _show_fatal_error(self, exc: Exception) -> None:
-        """Deixa o erro na tela até o usuário fechar a janela."""
+        """Deixa o erro na tela até o usuário sair ou voltar ao menu."""
         if not self.gui or not self._gui_started:
             return
         self._refresh_gui(f"Erro: {exc}", "error")
+        self.gui.set_actions([
+            (ACTION_MENU, "Voltar ao menu", False),
+            (ACTION_QUIT, "Sair", False),
+        ])
         self._wait_for_close()
+
+    # -- Ações da partida ---------------------------------------------------
+
+    def _game_actions(self) -> list[tuple[str, str, bool]]:
+        """As ações que fazem sentido agora, para o menu da partida.
+
+        Cada item é `(id, rótulo, confirmar)`. A confirmação vale enquanto a
+        partida está viva: é o que impede um toque errado de jogar fora uma
+        partida em andamento. Terminada a partida, ela só atrapalharia.
+        """
+        actions: list[tuple[str, str, bool]] = []
+        playing = not (self._end_reason or self.game_state.is_game_over)
+
+        if self.mode == GameMode.STOCKFISH:
+            actions.append((ACTION_RESTART, "Reiniciar partida", playing))
+
+        if playing and self.lichess:
+            # Abortar só existe antes de os dois lados jogarem; depois disso
+            # o Lichess recusa, e o caminho é desistir.
+            if len(self.game_state.move_history) < 2:
+                actions.append((ACTION_ABORT, "Abortar partida", True))
+            actions.append((
+                ACTION_DRAW,
+                "Aceitar empate" if self._draw_offered else "Oferecer empate",
+                False,
+            ))
+
+        if playing:
+            actions.append((ACTION_RESIGN, "Desistir", True))
+
+        actions.append((ACTION_MENU, "Voltar ao menu", playing))
+        actions.append((ACTION_QUIT, "Sair", playing))
+        return actions
+
+    def _drain_gui_actions(self) -> None:
+        """Executa o que o jogador escolheu no menu da partida."""
+        while True:
+            action = self.gui.take_action()
+            if action is None:
+                return
+            self._apply_gui_action(action)
+
+    def _apply_gui_action(self, action: str) -> None:
+        """Despacha uma ação escolhida no menu."""
+        logger.info("Ação escolhida no menu da partida: %s", action)
+
+        if action == ACTION_RESTART:
+            self._restart_game()
+        elif action == ACTION_RESIGN:
+            self._resign()
+        elif action == ACTION_ABORT:
+            self._abort_lichess_game()
+        elif action == ACTION_DRAW:
+            self._answer_draw()
+        elif action in (ACTION_MENU, ACTION_QUIT):
+            self.exit_reason = action
+            self._running = False
+
+    def _restart_game(self) -> None:
+        """Recomeça do zero, mantendo modo, cor e camada de entrada.
+
+        O espelho dos sensores não é tocado: ele reflete as peças como elas
+        estão de verdade na mesa. A diferença para a posição inicial vira a
+        instrução de sempre ("coloque a peça em d1"), que é justamente o que
+        o jogador precisa fazer para recomeçar.
+        """
+        self.game_state.reset()
+        self.game_state.message = ""
+        self._end_reason = None
+        self._end_message_type = "success"
+        self._misplaced.clear()
+        self._in_hand.clear()
+        self._pending_castling = None
+        self._lifted_square = None
+        self._draw_offered = False
+
+        # O mock entende "reset" quando a aplicação consegue escrever no
+        # stdin dele; sem isso, é o jogador que recompõe o tabuleiro.
+        self.ipc_reader.send_to_process("reset")
+
+        logger.info("Partida reiniciada.")
+        self._set_board_message("", "info")
+        self._notify("Partida reiniciada — monte a posição inicial.", "info")
+
+    def _resign(self) -> None:
+        """Desiste da partida em andamento."""
+        if self.lichess:
+            if not self.lichess.resign():
+                self._notify(
+                    "O Lichess não aceitou a desistência — veja o log.", "error"
+                )
+                return
+            # O fim oficial (com o status do servidor) chega pelo stream; esta
+            # mensagem cobre o intervalo até ele chegar.
+            self._end_reason = f"Você desistiu — vitória de {self._opponent_name}."
+        else:
+            self._end_reason = "Você desistiu — vitória do Stockfish."
+
+        self._end_message_type = "error"
+
+    def _abort_lichess_game(self) -> None:
+        """Aborta a partida no Lichess (sem derrota para ninguém)."""
+        if not self.lichess:
+            return
+        if self.lichess.abort():
+            self._end_reason = "Partida abortada."
+            self._end_message_type = "info"
+        else:
+            self._notify(
+                "O Lichess não deixou abortar (a partida já começou) — "
+                "resta desistir.", "error",
+            )
+
+    def _answer_draw(self) -> None:
+        """Oferece empate, ou aceita o que o oponente ofereceu."""
+        if not self.lichess:
+            return
+        accepting = self._draw_offered
+        if self.lichess.handle_draw(accept=True):
+            self._notify(
+                "Empate aceito." if accepting
+                else "Empate oferecido — aguardando a resposta.", "info",
+            )
+        else:
+            self._notify(
+                "Não foi possível enviar a proposta de empate.", "error"
+            )
 
     def _poll_physical_board(self) -> None:
         """Lê o tabuleiro físico e reage à diferença.
@@ -746,13 +906,32 @@ class ChessApplication:
         self._board_message = message
         self._board_message_type = message_type
 
+    def _notify(
+        self,
+        message: str,
+        message_type: str = "info",
+        seconds: float = 6.0,
+    ) -> None:
+        """Mostra por alguns segundos a resposta a uma ação do menu."""
+        self._notice = message
+        self._notice_type = message_type
+        self._notice_until = time.monotonic() + seconds
+        logger.info("Aviso ao jogador: %s", message)
+        self._refresh_gui()
+
     def _current_status(self) -> tuple[str, str]:
         """Mensagem que a barra de status deve exibir e sua severidade.
 
-        A instrução física tem prioridade: enquanto o tabuleiro não estiver
-        na posição esperada, é ela que o jogador precisa ler. Avisos do jogo
-        ("Xeque!") entram como prefixo para não se perderem.
+        O aviso de uma ação recém-feita vem primeiro (é a resposta ao que o
+        jogador acabou de pedir), depois a instrução física: enquanto o
+        tabuleiro não estiver na posição esperada, é ela que ele precisa ler.
+        Avisos do jogo ("Xeque!") entram como prefixo para não se perderem.
         """
+        if self._notice:
+            if time.monotonic() < self._notice_until:
+                return self._notice, self._notice_type
+            self._notice = ""
+
         if self._board_message:
             if self.game_state.message:
                 return (
@@ -1184,9 +1363,9 @@ class ChessApplication:
             return
         self._draw_offered = bool(offering)
         if self._draw_offered:
-            logger.info(
-                "%s ofereceu empate — responda pelo site do Lichess.",
-                self._opponent_name,
+            self._notify(
+                f"{self._opponent_name} ofereceu empate — Esc para responder.",
+                "info", seconds=10.0,
             )
 
     def _end_lichess_game(self, status: str, winner: Optional[str]) -> None:
@@ -1210,19 +1389,73 @@ class ChessApplication:
 
     def _get_turn_message(self) -> str:
         """Retorna mensagem indicando de quem é o turno."""
+        # Uma proposta de empate fica na tela enquanto estiver de pé: ela
+        # espera uma resposta, e o aviso passageiro já saiu de cartaz.
+        if self._draw_offered:
+            return (
+                f"{self._opponent_name} ofereceu empate — Esc para responder"
+            )
         if self.game_state.is_player_turn:
             return "Sua vez — faça um movimento no tabuleiro"
         if self.mode == GameMode.STOCKFISH:
             return "Vez do Stockfish..."
         return f"Aguardando {self._opponent_name}..."
 
+    def _wait_after_game(self) -> bool:
+        """Segura a tela de fim de partida, tratando o que for escolhido nela.
+
+        O menu já está aberto quando esta tela aparece: com a partida acabada,
+        as opções (jogar de novo, voltar ao menu, sair) são a única coisa que
+        ainda há para fazer, e ninguém deveria precisar adivinhar a tecla.
+
+        Returns:
+            True se o jogador reiniciou a partida (o loop principal continua);
+            False se a aplicação deve encerrar.
+        """
+        if not self.gui:
+            return False
+
+        self.gui.set_actions(self._game_actions())
+        self.gui.open_menu()
+
+        while True:
+            if not self.gui.handle_events():
+                self.exit_reason = ACTION_QUIT
+                return False
+
+            self._drain_gui_actions()
+            if not self._running:
+                return False
+
+            # Reiniciar limpa o fim de partida: é assim que se sabe que a
+            # tela de fim não tem mais razão de estar na tela.
+            if not (self._end_reason or self.game_state.is_game_over):
+                self.gui.set_actions(self._game_actions())
+                return True
+
+            # O Lichess ainda pode ter algo a dizer depois do fim (o status
+            # oficial de uma desistência, por exemplo).
+            if self.lichess:
+                self._drain_lichess_events()
+
+            self._refresh_gui(
+                self._end_reason or self.game_state.get_result(),
+                self._end_message_type,
+            )
+            time.sleep(0.05)
+
     def _wait_for_close(self) -> None:
-        """Aguarda o usuário fechar a janela após fim de jogo."""
+        """Aguarda o usuário fechar a janela ou escolher uma ação."""
         if not self.gui:
             return
 
         while True:
             if not self.gui.handle_events():
+                self.exit_reason = ACTION_QUIT
+                break
+            action = self.gui.take_action()
+            if action in (ACTION_MENU, ACTION_QUIT):
+                self.exit_reason = action
                 break
             time.sleep(0.05)
 
@@ -1319,12 +1552,14 @@ def _warn_if_token_readable(path: str) -> None:
 
 def _run_game(
     config: LaunchConfig, token: str, token_origin: str
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     """Roda uma partida com a configuração escolhida.
 
     Returns:
-        Tupla (mensagem, severidade) a ser exibida no menu seguinte — é o que
-        conta o que aconteceu quando a partida nem chegou a começar.
+        Tupla (mensagem, severidade, saída). Os dois primeiros são o que o
+        menu seguinte exibe — é o que conta o que aconteceu quando a partida
+        nem chegou a começar. O terceiro é como o jogador saiu da partida:
+        ACTION_MENU volta ao menu, ACTION_QUIT fecha a aplicação.
     """
     logging.getLogger().setLevel(getattr(logging, config.log_level))
 
@@ -1333,7 +1568,7 @@ def _run_game(
     # depois (um 401, um binário inexistente, um 400 genérico).
     blocking = config.blocking_issue(token)
     if blocking:
-        return blocking, "error"
+        return blocking, "error", ACTION_MENU
 
     if config.game_mode == GameMode.LICHESS:
         logger.info("Token do Lichess lido de: %s", token_origin)
@@ -1342,12 +1577,12 @@ def _run_game(
         app = ChessApplication(**config.app_kwargs(token, token_origin))
     except ImportError as exc:
         # pygame ausente: a janela do jogo não abre, mas o menu de terminal sim.
-        return f"Interface gráfica indisponível: {exc}", "error"
+        return f"Interface gráfica indisponível: {exc}", "error", ACTION_MENU
     except (LichessError, OSError, ValueError) as exc:
-        return f"Não foi possível iniciar a partida: {exc}", "error"
+        return f"Não foi possível iniciar a partida: {exc}", "error", ACTION_MENU
 
     app.run()
-    return "Partida encerrada — escolha a próxima.", "info"
+    return "Partida encerrada — escolha a próxima.", "info", app.exit_reason
 
 
 def main() -> None:
@@ -1506,7 +1741,7 @@ Exemplos de uso:
     if not show_menu:
         if config.game_mode == GameMode.LICHESS:
             _check_time_control(args, parser)
-        message, severity = _run_game(config, lichess_token, token_origin)
+        message, severity, _ = _run_game(config, lichess_token, token_origin)
         if severity == "error":
             parser.error(message)
         return
@@ -1529,8 +1764,17 @@ Exemplos de uso:
         if chosen is None:
             logger.info("Menu encerrado pelo usuário.")
             return
+
         config = chosen
-        notice, notice_type = _run_game(config, lichess_token, token_origin)
+        notice, notice_type, exit_reason = _run_game(
+            config, lichess_token, token_origin
+        )
+
+        # Fechar a janela (ou escolher "Sair") encerra a aplicação; só o
+        # "Voltar ao menu" traz o jogador de volta para cá.
+        if exit_reason == ACTION_QUIT:
+            logger.info("Aplicação encerrada pela partida.")
+            return
 
 
 if __name__ == "__main__":
