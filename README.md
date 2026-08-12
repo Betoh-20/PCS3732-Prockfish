@@ -32,6 +32,8 @@ app/
 ├── stockfish_engine.py  # Interface UCI com Stockfish
 ├── lichess_client.py    # Cliente da Lichess Board API
 ├── gui.py               # Interface gráfica com pygame
+├── launcher.py          # Configuração de uma partida (modo, entrada, engine)
+├── menu.py              # Menu que escolhe essa configuração (janela ou terminal)
 └── main.py              # Ponto de entrada
 ```
 
@@ -100,6 +102,72 @@ set CHESS_STOCKFISH_PATH=C:\caminho\para\stockfish.exe
 
 ## Uso
 
+### Menu de configuração
+
+Tudo o que os alvos do `Makefile` escolhem por variáveis — modo de jogo,
+oponente, cor das peças, camada de entrada, tempo da engine, controle de tempo
+do Lichess — também é escolhido na própria interface. Sem argumentos, a
+aplicação abre o menu:
+
+```bash
+python -m app.main        # ou: make menu
+```
+
+```
+Tabuleiro de Xadrez Eletrônico
+Stockfish (1s por lance) · peças brancas · entrada: mock (gui)
+──────────────────────────────────────────────────────────────
+  Modo de jogo                          Stockfish local
+  Tempo por lance (s)              <       1.0       >
+  Cor das peças físicas                          brancas
+  Entrada do tabuleiro               mock (sem hardware)
+  ...
+  INICIAR PARTIDA
+  Compilar processo C (make board-input)
+  Sair
+──────────────────────────────────────────────────────────────
+Equivalente no terminal: make stockfish COLOR=white
+Setas: escolher/alterar · Enter: editar ou iniciar · F5: compilar · Esc: sair
+```
+
+| Tecla | Ação |
+|-------|------|
+| `↑` `↓` | Escolhe a linha |
+| `←` `→` | Altera o valor da linha |
+| `Enter` | Edita um campo de texto, alterna um sim/não ou aciona a linha |
+| `F5` | Compila o processo C (o mesmo que `make board-input`) |
+| `Esc` / `Q` | Sai da aplicação |
+
+O mouse faz o mesmo: um clique escolhe a linha, o clique seguinte altera o
+valor (botão direito volta) e a roda rola a lista.
+
+Detalhes que o menu resolve sozinho:
+
+- **as linhas mudam com o que já foi escolhido** — o nível da IA só aparece no
+  modo Lichess contra a IA, as opções do teclado 4×4 só com essa camada
+  selecionada;
+- **avisa antes de começar** — token do Lichess ausente, controle de tempo que
+  a Board API recusa, processo C ainda não compilado e Stockfish fora do
+  `PATH` aparecem no rodapé, e a partida só começa quando não há impedimento;
+- **compila o processo C** sem sair da interface (por `make`, ou chamando o
+  compilador direto quando não há `make` na máquina);
+- **mostra o comando equivalente** (`make ...` ou `python -m app.main ...`),
+  para repetir a mesma partida pelo terminal;
+- **volta ao fim de cada partida**, para escolher a próxima sem reabrir o
+  programa.
+
+Sem display (por SSH, por exemplo) o mesmo menu aparece como uma lista
+numerada no terminal.
+
+Opções passadas na linha de comando entram no menu como valores iniciais, o
+que também vale para os alvos do `Makefile`:
+
+```bash
+make menu COLOR=black                    # abre o menu já com as pretas
+python -m app.main --menu --mode lichess --lichess-ai 6
+python -m app.main --no-menu --mode stockfish   # começa direto, sem menu
+```
+
 ### Atalhos do Makefile
 
 Todos os modos de execução têm um alvo no `Makefile` da raiz do repositório.
@@ -111,6 +179,7 @@ make
 
 | Alvo | O que faz |
 |------|-----------|
+| `make menu` | Abre o [menu de configuração](#menu-de-configuração) e joga a partir dele |
 | `make stockfish` | Partida offline contra o Stockfish (não precisa de rede nem de token) |
 | `make lichess-ai` | Partida contra a IA do Lichess (nível `LICHESS_LEVEL`, padrão 3) |
 | `make random-sir` | Desafia a conta `random-sir` no Lichess |
@@ -198,9 +267,15 @@ para o modo interativo por terminal.
 python -m app.main --help
 
 Opções:
+  --menu / --no-menu           Abre (ou dispensa) o menu de configuração.
+                               Sem argumento nenhum, o menu é o padrão
   --mode {stockfish,lichess}   Modo de jogo (padrão: stockfish)
   --color {white,black}        Cor do jogador (padrão: white)
   --ipc {subprocess,stdin,pipe} Modo de IPC (padrão: subprocess)
+  --input {mock,reed,keypad}   Camada de entrada (as duas últimas usam o
+                               processo C de build/board_input)
+  --board-input-args "..."     Opções extras do processo C
+  --mock-mode {gui,interactive,auto}  Como o mock do hardware é operado
   --stockfish-path PATH        Caminho do Stockfish
   --stockfish-time SECONDS     Tempo de cálculo (padrão: 1.0)
   --token TOKEN                Token Lichess (evite: fica visível em `ps`)
@@ -449,12 +524,22 @@ make keypad
 make lichess-ai-hw INPUT_LAYER=keypad
 ```
 
-Por baixo, os alvos apenas apontam a aplicação para o binário em vez do mock:
+A mesma escolha está no [menu](#menu-de-configuração), em "Entrada do
+tabuleiro" — e, com o binário ainda não compilado, a linha "Compilar processo
+C" resolve isso ali mesmo.
+
+Por baixo, os alvos apenas apontam a aplicação para o binário em vez do mock,
+o que também se faz direto pela linha de comando:
 
 ```bash
+# Pelas opções da aplicação
+python -m app.main --no-menu --mode stockfish --input keypad \
+                   --board-input-args "--keys stdin"
+
+# Ou pelas variáveis de ambiente que os alvos do Makefile usam
 CHESS_C_PROCESS=./build/board_input \
 CHESS_C_PROCESS_ARGS='--input keypad' \
-python -m app.main --mode stockfish
+python -m app.main --no-menu --mode stockfish
 ```
 
 ### Teclado 4×4 — como digitar um lance
@@ -719,6 +804,16 @@ etapas](#roque-em-duas-etapas).
 | `CHESS_MOCK_BOARD_SIZE` | Tamanho da matriz de botões do mock (px) | `560` |
 
 ## Teclas de Atalho
+
+### Menu de configuração
+
+| Tecla | Ação |
+|-------|------|
+| `↑` `↓` | Escolher a linha |
+| `←` `→` | Alterar o valor |
+| `Enter` | Editar o campo, alternar sim/não ou acionar a linha |
+| `F5` | Compilar o processo C |
+| `ESC` / `Q` | Sair |
 
 ### GUI da aplicação
 

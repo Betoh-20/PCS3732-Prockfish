@@ -43,6 +43,8 @@ from app.lichess_client import (
     LichessClient, LichessError, is_board_time_control, explain_time_control,
 )
 from app.gui import ChessGUI
+from app.launcher import LaunchConfig
+from app.menu import run_setup_menu
 
 logger = logging.getLogger(__name__)
 
@@ -125,14 +127,22 @@ class ChessApplication:
         lichess_timeout: float = 180.0,
         no_gui: bool = False,
         flip_board: bool = False,
+        hardware_path: str = C_PROCESS_PATH,
+        hardware_args: Optional[list[str]] = None,
     ):
         self.mode = mode
         self.player_color = player_color
 
+        # Processo que alimenta o IPC. O padrão vem do ambiente (é assim que
+        # os alvos `-hw` do Makefile escolhem o processo C); o menu passa a
+        # escolha dele explicitamente.
+        self._hardware_path = hardware_path
+        self._hardware_args = hardware_args
+
         # Módulos
         self.game_state = GameState(player_color)
         self.interpreter = MoveInterpreter()
-        self.ipc_reader = IPCReader(mode=ipc_mode)
+        self.ipc_reader = IPCReader(mode=ipc_mode, process_path=hardware_path)
 
         # Engine / Lichess
         self.stockfish: Optional[StockfishEngine] = None
@@ -245,14 +255,23 @@ class ChessApplication:
 
         O `--flip` é só do mock (orientação da janela dele). Ao processo C vai
         também o que estiver em $CHESS_C_PROCESS_ARGS, que é onde se escolhe a
-        camada de entrada (`--input reed` ou `--input keypad`).
+        camada de entrada (`--input reed` ou `--input keypad`) quando ela não
+        veio pelo menu.
         """
-        if C_PROCESS_PATH != MOCK_PROCESS_PATH:
-            return ["--color", self.player_color.value, *C_PROCESS_ARGS]
+        is_mock = self._hardware_path == MOCK_PROCESS_PATH
+
+        # `hardware_args=None` significa "decida pelo ambiente": os argumentos
+        # de $CHESS_C_PROCESS_ARGS são do processo C e não valem para o mock,
+        # que tem opções próprias.
+        if self._hardware_args is None:
+            extra = [] if is_mock else list(C_PROCESS_ARGS)
+        else:
+            extra = list(self._hardware_args)
+
         args = ["--color", self.player_color.value]
-        if self.player_color == PlayerColor.BLACK:
+        if is_mock and self.player_color == PlayerColor.BLACK:
             args.append("--flip")
-        return args
+        return args + extra
 
     def run(self) -> None:
         """Loop principal do jogo."""
@@ -1298,13 +1317,50 @@ def _warn_if_token_readable(path: str) -> None:
         )
 
 
+def _run_game(
+    config: LaunchConfig, token: str, token_origin: str
+) -> tuple[str, str]:
+    """Roda uma partida com a configuração escolhida.
+
+    Returns:
+        Tupla (mensagem, severidade) a ser exibida no menu seguinte — é o que
+        conta o que aconteceu quando a partida nem chegou a começar.
+    """
+    logging.getLogger().setLevel(getattr(logging, config.log_level))
+
+    # Token ausente, processo C não compilado, controle de tempo recusado pela
+    # Board API: dizer isso agora é bem melhor do que o erro que apareceria
+    # depois (um 401, um binário inexistente, um 400 genérico).
+    blocking = config.blocking_issue(token)
+    if blocking:
+        return blocking, "error"
+
+    if config.game_mode == GameMode.LICHESS:
+        logger.info("Token do Lichess lido de: %s", token_origin)
+
+    try:
+        app = ChessApplication(**config.app_kwargs(token, token_origin))
+    except ImportError as exc:
+        # pygame ausente: a janela do jogo não abre, mas o menu de terminal sim.
+        return f"Interface gráfica indisponível: {exc}", "error"
+    except (LichessError, OSError, ValueError) as exc:
+        return f"Não foi possível iniciar a partida: {exc}", "error"
+
+    app.run()
+    return "Partida encerrada — escolha a próxima.", "info"
+
+
 def main() -> None:
     """Ponto de entrada principal via linha de comando."""
     parser = argparse.ArgumentParser(
         description="Tabuleiro de Xadrez Eletrônico — Camada Python",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Sem argumentos, abre o menu de configuração (modo de jogo, oponente, cor e
+camada de entrada) — o mesmo que `--menu`.
+
 Exemplos de uso:
+  python -m app.main
   python -m app.main --mode stockfish
   python -m app.main --mode stockfish --stockfish-path /usr/bin/stockfish
   python -m app.main --mode stockfish --ipc subprocess --stockfish-time 2.0
@@ -1331,6 +1387,22 @@ Exemplos de uso:
         "--ipc", choices=["subprocess", "stdin", "pipe"],
         default=IPC_MODE,
         help=f"Modo de IPC (padrão: {IPC_MODE}).",
+    )
+    parser.add_argument(
+        "--input", choices=["mock", "reed", "keypad"], default=None,
+        help="Camada de entrada do tabuleiro: 'mock' (simulação em Python), "
+             "'reed' (matriz de reed switches) ou 'keypad' (teclado matricial "
+             "4x4). As duas últimas usam o processo C de build/board_input. "
+             "Sem esta opção, vale o que estiver em $CHESS_C_PROCESS.",
+    )
+    parser.add_argument(
+        "--board-input-args", metavar="ARGS", default="",
+        help="Opções extras do processo C, entre aspas "
+             "(ex: --board-input-args \"--keys stdin --lcd\").",
+    )
+    parser.add_argument(
+        "--mock-mode", choices=["gui", "interactive", "auto"], default="gui",
+        help="Como o mock do hardware é operado (padrão: gui).",
     )
     parser.add_argument(
         "--stockfish-path", default=STOCKFISH_PATH,
@@ -1400,6 +1472,18 @@ Exemplos de uso:
         default="INFO",
         help="Nível de log (padrão: INFO).",
     )
+    menu_group = parser.add_mutually_exclusive_group()
+    menu_group.add_argument(
+        "--menu", action="store_true",
+        help="Abre o menu de configuração antes da partida (padrão quando "
+             "nenhuma opção é passada). As opções da linha de comando entram "
+             "no menu como valores iniciais, e ele reaparece ao fim de cada "
+             "partida.",
+    )
+    menu_group.add_argument(
+        "--no-menu", action="store_true",
+        help="Começa a partida direto, sem menu.",
+    )
 
     args = parser.parse_args()
 
@@ -1410,48 +1494,43 @@ Exemplos de uso:
         datefmt="%H:%M:%S",
     )
 
-    # Modo de jogo
-    game_mode = (
-        GameMode.STOCKFISH if args.mode == "stockfish"
-        else GameMode.LICHESS
-    )
-
-    # Cor do jogador
-    player_color = (
-        PlayerColor.WHITE if args.color == "white"
-        else PlayerColor.BLACK
-    )
-
     lichess_token, token_origin = _resolve_token(args, parser)
-    if game_mode == GameMode.LICHESS:
-        logger.info("Token do Lichess lido de: %s", token_origin)
-        _check_time_control(args, parser)
 
-    # Cria e executa a aplicação
-    try:
-        app = ChessApplication(
-            mode=game_mode,
-            player_color=player_color,
-            ipc_mode=args.ipc,
-            stockfish_path=args.stockfish_path,
-            stockfish_time=args.stockfish_time,
-            lichess_token=lichess_token,
-            lichess_token_origin=token_origin,
-            lichess_game_id=args.lichess_game,
-            lichess_ai_level=args.lichess_ai,
-            lichess_challenge_user=args.lichess_challenge,
-            lichess_rated=args.lichess_rated,
-            lichess_time=args.lichess_time,
-            lichess_increment=args.lichess_increment,
-            lichess_timeout=args.lichess_timeout,
-            no_gui=args.no_gui,
-            flip_board=args.flip,
-        )
-    except LichessError as exc:
-        parser.error(str(exc))
+    # O menu é o caminho padrão de quem chama a aplicação sem argumentos; com
+    # opções na linha de comando (é o que os alvos do Makefile fazem) ela
+    # continua indo direto para a partida.
+    show_menu = args.menu or (not args.no_menu and len(sys.argv) == 1)
+
+    config = LaunchConfig.from_namespace(args)
+
+    if not show_menu:
+        if config.game_mode == GameMode.LICHESS:
+            _check_time_control(args, parser)
+        message, severity = _run_game(config, lichess_token, token_origin)
+        if severity == "error":
+            parser.error(message)
         return
 
-    app.run()
+    # Com o menu, a aplicação vira um ciclo: configurar, jogar e voltar para
+    # o menu — sem precisar reabrir o programa a cada partida.
+    notice, notice_type = "", "info"
+    while True:
+        try:
+            chosen = run_setup_menu(
+                config,
+                token=lichess_token,
+                notice=notice,
+                notice_type=notice_type,
+                prefer_gui=not config.no_gui,
+            )
+        except KeyboardInterrupt:
+            chosen = None
+
+        if chosen is None:
+            logger.info("Menu encerrado pelo usuário.")
+            return
+        config = chosen
+        notice, notice_type = _run_game(config, lichess_token, token_origin)
 
 
 if __name__ == "__main__":
