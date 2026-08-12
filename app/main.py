@@ -436,6 +436,7 @@ class ChessApplication:
         self._in_hand.clear()
         self._pending_castling = None
         self._lifted_square = None
+        self._entry = None
         self._draw_offered = False
 
         # O mock entende "reset" quando a aplicação consegue escrever no

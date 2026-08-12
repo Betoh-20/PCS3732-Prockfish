@@ -600,6 +600,11 @@ O roque é digitado em dois lances (rei e depois torre), igual ao que se faz
 no tabuleiro físico. A promoção vira dama automaticamente, como na camada de
 reed switches.
 
+O monitor acompanha a digitação: cada tecla aparece na barra de status e, com
+a casa de origem já digitada, o tabuleiro destaca os destinos possíveis
+daquela peça — ver [Destaques no tabuleiro](#no-teclado-matricial). Não é
+preciso enxergar o LCD para saber o que já foi digitado.
+
 #### Comandos
 
 O prefixo `0` (só com a entrada vazia) abre os comandos que correspondem a
@@ -700,9 +705,10 @@ nenhum outro ligou — a GUI mostra para onde essa peça pode ir:
 
 | Marca | Significado |
 |-------|-------------|
-| Casa verde | Casa de onde a peça foi levantada |
+| Casa verde | Casa de onde a peça foi levantada (ou a origem digitada no teclado) |
 | Ponto no centro | Destino legal, casa livre |
 | Anel vermelho | Destino legal que captura uma peça (inclui *en passant*) |
+| Borda âmbar | Destino já digitado no teclado, ainda não confirmado com `#` |
 | Casa amarela | Origem e destino do último lance |
 
 Os destinos saem dos lances legais do tabuleiro virtual, então já consideram
@@ -710,6 +716,20 @@ xeque e peças cravadas: uma peça sem lance legal não recebe marca nenhuma.
 Nada é destacado fora do turno do jogador, nem quando a peça foi levantada
 para desfazer um movimento ilegal — aí o que vale é a instrução da barra de
 status.
+
+### No teclado matricial
+
+Sem peça levantada não há o que ler dos sensores, então quem faz esse papel
+são as próprias teclas: **as duas primeiras já escolhem a peça**. Digitar
+`AA2` (e2) destaca e2 e mostra os destinos daquela peça, e a barra de status
+mostra o que foi digitado até agora — `Lance: E2_ · Digitando...`, o mesmo
+par que aparece no LCD. Digitando o destino, ele ganha a borda âmbar até o
+`#` confirmar.
+
+Só uma peça do próprio jogador é destacada: apontar para uma casa vazia ou
+para uma peça do oponente é erro de digitação, e destacá-la sugeriria um
+lance que não existe. Nos comandos (`0-1` retirar, `0-2` colocar) a casa
+digitada não é uma peça escolhida, então não há previsão nenhuma.
 
 ## Roque em duas etapas
 
@@ -810,6 +830,39 @@ casa:estado,casa:estado\n
 O roque também é aceito num evento só (`e1:0,g1:1,h1:0,f1:1`), mas na mão do
 jogador ele chega em duas etapas — veja [Roque em duas
 etapas](#roque-em-duas-etapas).
+
+### Linhas de digitação (`@entry`)
+
+A camada de teclado manda, além dos eventos, o lance que ainda está sendo
+digitado. Essas linhas começam com `@` — caractere que nenhuma casa tem —
+para que quem só entende `casa:estado` as ignore sem tropeçar:
+
+```
+@entry|origem|destino|texto|status\n
+```
+
+| Campo | Conteúdo |
+|-------|----------|
+| `origem` | Casa de origem, assim que as duas primeiras teclas formam uma casa (vazio nos comandos) |
+| `destino` | Casa de destino, quando as quatro teclas já foram digitadas |
+| `texto` | O que aparece no LCD (`Lance: E2_`); vazio quando não há nada digitado |
+| `status` | Mensagem curta do processo C (`Digitando...`, `Origem vazia`) |
+
+Digitando `AA2AA4#`, a sequência é:
+
+```
+@entry|||Lance: A_|Digitando...
+@entry|||Lance: E_|Coluna trocada
+@entry|e2||Lance: E2_|Digitando...
+@entry|e2||Lance: E2A_|Digitando...
+@entry|e2||Lance: E2E_|Coluna trocada
+@entry|e2|e4|Lance: E2E4|Digitando...
+e2:0,e4:1
+@entry||||Enviado e2e4
+```
+
+A camada reed não emite essas linhas: nela a peça na mão já é visível pelos
+próprios sensores.
 
 ## Configuração via variáveis de ambiente
 
