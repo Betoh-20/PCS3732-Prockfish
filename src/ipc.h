@@ -9,6 +9,17 @@
  *     casa   — notação algébrica a1..h8
  *     estado — 0 (desocupada) ou 1 (ocupada)
  *
+ * Há um segundo tipo de linha, que não é evento de sensor e por isso começa
+ * com '@' (caractere que nenhuma casa pode ter):
+ *
+ *     @entry|origem|destino|texto|status\n
+ *     Exemplo: "@entry|e2||Lance: E2_|Digitando..."
+ *
+ * É o que a camada de teclado usa para contar o que está sendo digitado
+ * antes do '#', para que a aplicação mostre o lance em formação e destaque
+ * os destinos da peça escolhida. Quem só entende `casa:estado` ignora essas
+ * linhas sem prejuízo: nenhum evento de tabuleiro vai por elas.
+ *
  * É este módulo que faz as duas camadas de entrada — reed switches e teclado
  * matricial — serem intercambiáveis: as duas falam exatamente a mesma língua
  * com o Python, que por isso não precisa saber qual delas está do outro lado.
@@ -45,6 +56,12 @@ void ipc_emit(const board_change *changes, size_t count);
 
 /* Atalho para o caso de uma casa só. */
 void ipc_emit_single(int square, int state);
+
+/* Emite uma linha de status já formatada (as que começam com '@').
+ *
+ * Args:
+ *     line: conteúdo da linha, sem o '\n' final. */
+void ipc_emit_line(const char *line);
 
 void ipc_close(void);
 

@@ -33,7 +33,7 @@ from app.config import (
     C_PROCESS_PATH, C_PROCESS_ARGS, MOCK_PROCESS_PATH,
     DEFAULT_TOKEN_FILES, read_token_file,
 )
-from app.ipc_reader import IPCReader
+from app.ipc_reader import IPCReader, KeypadEntry
 from app.game_state import GameState
 from app.move_interpreter import (
     MoveInterpreter, build_board_instruction, build_undo_instruction,
@@ -224,6 +224,11 @@ class ChessApplication:
         # Casa de onde o jogador levantou a peça para jogar. Enquanto ela
         # estiver na mão, a GUI destaca os destinos legais dessa peça.
         self._lifted_square: Optional[str] = None
+
+        # Lance sendo digitado no teclado matricial (plano B). Faz o papel
+        # da peça levantada: com a origem digitada, a GUI mostra para onde
+        # aquela peça pode ir, antes mesmo do lance ser confirmado.
+        self._entry: Optional[KeypadEntry] = None
 
         # Roque em andamento: o rei já andou as duas casas e o jogo espera a
         # torre. Enquanto isso, nenhum outro lance é aceito.
@@ -497,6 +502,14 @@ class ChessApplication:
         if event is not None:
             logger.debug("Evento recebido do IPC: %s", event)
             self._apply_sensor_event(event)
+
+        # A digitação do teclado matricial vem por linhas próprias e só
+        # interessa a mais recente: ela já descreve todo o buffer de teclas.
+        while True:
+            entry = self.ipc_reader.read_entry()
+            if entry is None:
+                break
+            self._entry = entry
 
         # A instrução é sempre derivada do estado atual — assim ela aparece
         # também sem evento novo (ex: peça capturada pelo oponente, que o
@@ -867,7 +880,13 @@ class ChessApplication:
                 )
             return
 
-        # 6. Tudo no lugar. A confirmação se auto-sustenta (had_pending
+        # 6. Nada pendente no tabuleiro: se há um lance sendo digitado no
+        #    teclado matricial, é ele que o jogador está olhando.
+        if self._entry is not None and self._entry.active:
+            self._set_board_message(self._entry.display(), "info")
+            return
+
+        # 7. Tudo no lugar. A confirmação se auto-sustenta (had_pending
         #    continua verdadeiro nos ciclos seguintes), ficando em cartaz até
         #    o próximo lance ou problema.
         if had_pending:
@@ -967,6 +986,7 @@ class ChessApplication:
             message_type=message_type,
             selected_square=selected,
             legal_targets=targets,
+            pending_square=self._typed_target_square(),
         )
 
     def _lifted_selection(self) -> tuple[Optional[int], dict[int, bool]]:
@@ -989,11 +1009,37 @@ class ChessApplication:
                 {chess.parse_square(pending.rook_to): False},
             )
 
+        # No teclado matricial nada é levantado: quem faz o papel da peça na
+        # mão são as duas primeiras teclas, que já dizem de qual casa o lance
+        # vai partir. Digitar "AA2" mostra os destinos da peça de e2.
         if self._lifted_square is None:
-            return None, {}
+            return self._typed_selection()
 
         square = chess.parse_square(self._lifted_square)
         return square, self.game_state.get_legal_targets(square)
+
+    def _typed_selection(self) -> tuple[Optional[int], dict[int, bool]]:
+        """Casa de origem digitada no teclado e os destinos legais dela.
+
+        Só uma peça do jogador é destacada: apontar para uma casa vazia ou
+        para uma peça do oponente é erro de digitação, e destacá-la sugeriria
+        um lance que não existe.
+        """
+        if self._entry is None or not self._entry.origin:
+            return None, {}
+
+        square = chess.parse_square(self._entry.origin)
+        piece = self.game_state.board.piece_at(square)
+        if piece is None or piece.color != self.game_state.board.turn:
+            return None, {}
+
+        return square, self.game_state.get_legal_targets(square)
+
+    def _typed_target_square(self) -> Optional[int]:
+        """Casa de destino já digitada, ainda não confirmada com '#'."""
+        if self._entry is None or not self._entry.target:
+            return None
+        return chess.parse_square(self._entry.target)
 
     def _handle_opponent_turn(self) -> None:
         """Processa o turno do oponente.

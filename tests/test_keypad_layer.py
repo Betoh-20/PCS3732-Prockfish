@@ -18,6 +18,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BUILD = REPO / "build"
 
+sys.path.insert(0, str(REPO))
+# O mesmo parser que a aplicação usa: assim as linhas "@entry" são conferidas
+# pelos dois lados do protocolo, e não só pela forma que o C escreve.
+from app.ipc_reader import parse_entry  # noqa: E402
+
 # O `.exe` cobre o binário compilado no Windows para testar a lógica do
 # teclado fora do Raspberry Pi (o GPIO não entra neste caminho de código).
 BINARY = next(
@@ -40,8 +45,8 @@ def check(label, condition, extra=""):
         failures.append(label)
 
 
-def run_keys(keys: str, color: str = "white") -> list[str]:
-    """Digita `keys` no processo C e devolve as linhas de evento emitidas.
+def run_keys_all(keys: str, color: str = "white") -> list[str]:
+    """Digita `keys` no processo C e devolve todas as linhas que ele emitiu.
 
     A saída usa só ASCII: o console do Windows (cp1252) não codifica as setas
     e a suíte morreria no primeiro `print` em vez de reportar o resultado.
@@ -55,6 +60,20 @@ def run_keys(keys: str, color: str = "white") -> list[str]:
         timeout=15,
     )
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def run_keys(keys: str, color: str = "white") -> list[str]:
+    """Só os eventos de sensor — o canal que a camada reed também usa."""
+    return [
+        line for line in run_keys_all(keys, color)
+        if parse_entry(line) is None
+    ]
+
+
+def run_entries(keys: str, color: str = "white") -> list:
+    """Só as linhas de digitação, já desserializadas em `KeypadEntry`."""
+    parsed = (parse_entry(line) for line in run_keys_all(keys, color))
+    return [entry for entry in parsed if entry is not None]
 
 
 def expect(label, keys, events, color="white"):
@@ -132,6 +151,85 @@ check(
 check(
     "0-9 traz as fileiras 1 e 2 ocupadas",
     bool(resync) and "e2:1" in resync[0] and "e5:0" in resync[0],
+)
+
+print("\n--- Digitação em andamento (linhas '@entry') ---")
+
+# A cada tecla sai uma linha contando o buffer: é o que a aplicação mostra na
+# barra de status e usa para destacar os destinos da peça escolhida.
+digitando = run_entries("AA2")
+
+# Um binário compilado antes dessa parte do protocolo não emite linha nenhuma;
+# falhar aqui só mandaria procurar bug onde não há um.
+if not digitando:
+    print("  Binário sem as linhas '@entry' — recompile com `make board-input`.")
+    print(f"\n{'=' * 70}")
+    if failures:
+        print(f"FALHARAM {len(failures)}: {', '.join(failures)}")
+        sys.exit(1)
+    print("Camada de teclado OK (digitação não conferida).")
+    sys.exit(0)
+
+check(
+    "cada tecla emite uma linha de digitação",
+    len(digitando) == 4,          # a inicial + uma por tecla
+    f"-- {len(digitando)} linha(s)",
+)
+check(
+    "origem sai quando a casa fica completa",
+    bool(digitando) and digitando[-1].origin == "e2"
+    and digitando[-1].target is None,
+    f"-- {digitando[-1] if digitando else None}",
+)
+check(
+    "o texto digitado acompanha as teclas",
+    bool(digitando) and digitando[-1].text.endswith("E2_"),
+    f"-- {digitando[-1].text if digitando else None!r}",
+)
+
+meio = run_entries("AA2A")
+check(
+    "casa incompleta não vira origem nova",
+    meio[-1].origin == "e2" and meio[-1].target is None,
+    f"-- {meio[-1]}",
+)
+
+completo = run_entries("AA2AA4")
+check(
+    "destino sai na quarta tecla",
+    completo[-1].origin == "e2" and completo[-1].target == "e4",
+    f"-- {completo[-1]}",
+)
+
+enviado = run_entries("AA2AA4#")
+check(
+    "'#' limpa a digitação",
+    not enviado[-1].active and enviado[-1].origin is None
+    and enviado[-1].target is None,
+    f"-- {enviado[-1]}",
+)
+
+# Nos comandos a casa digitada não é uma peça escolhida: prever lances a
+# partir dela seria mentira.
+comando = run_entries("01AA2")
+check(
+    "comando não emite origem",
+    comando[-1].origin is None and "Retirar" in comando[-1].text,
+    f"-- {comando[-1]}",
+)
+
+# O apagar tem de desfazer a origem também, senão o destaque ficaria numa
+# casa que o jogador acabou de descartar.
+apagado = run_entries("AA2*")
+check(
+    "'*' desfaz a origem",
+    apagado[-1].origin is None,
+    f"-- {apagado[-1]}",
+)
+
+check(
+    "as linhas de digitação não contaminam os eventos",
+    run_keys("AA2AA4#") == ["e2:0,e4:1"],
 )
 
 print(f"\n{'=' * 70}")

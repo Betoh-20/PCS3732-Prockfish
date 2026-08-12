@@ -33,6 +33,7 @@ from app.config import (
     LIGHT_SQUARE_COLOR, DARK_SQUARE_COLOR, HIGHLIGHT_COLOR,
     INVALID_MOVE_COLOR, BG_COLOR, STATUS_BG_COLOR, TEXT_COLOR,
     COORD_COLOR, SELECTED_SQUARE_COLOR, MOVE_HINT_COLOR, CAPTURE_HINT_COLOR,
+    PENDING_SQUARE_COLOR,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,7 @@ class ChessGUI:
         self._last_highlighted: Optional[set] = None
         self._last_selected: Optional[int] = None
         self._last_targets: Optional[dict[int, bool]] = None
+        self._last_pending: Optional[int] = None
         self._last_message: Optional[str] = None
         self._message_color = TEXT_COLOR
         self._needs_full_redraw = True
@@ -296,6 +298,7 @@ class ChessGUI:
         message_type: str = "info",
         selected_square: Optional[int] = None,
         legal_targets: Optional[dict[int, bool]] = None,
+        pending_square: Optional[int] = None,
     ) -> None:
         """Atualiza a renderização do tabuleiro.
 
@@ -308,6 +311,8 @@ class ChessGUI:
                 enquanto ela estiver na mão.
             legal_targets: Destinos legais dessa peça, no formato
                 {casa: é_captura}. Vazios recebem um ponto; capturas, um anel.
+            pending_square: Destino já digitado no teclado matricial mas
+                ainda não confirmado — marcado com uma borda.
         """
         if self._screen is None:
             return
@@ -324,7 +329,9 @@ class ChessGUI:
         fen_changed = current_fen != self._last_board_fen
         highlight_changed = highlighted != self._last_highlighted
         selection_changed = (
-            selected_square != self._last_selected or targets != self._last_targets
+            selected_square != self._last_selected
+            or targets != self._last_targets
+            or pending_square != self._last_pending
         )
         message_changed = message != self._last_message
 
@@ -339,7 +346,9 @@ class ChessGUI:
             or fen_changed or highlight_changed or selection_changed
         )
         if redrew_board:
-            self._draw_full(board, highlighted, selected_square, targets)
+            self._draw_full(
+                board, highlighted, selected_square, targets, pending_square
+            )
             self._needs_full_redraw = False
 
         # `_draw_full` limpa a janela inteira, inclusive a barra de status:
@@ -357,6 +366,7 @@ class ChessGUI:
         self._last_highlighted = highlighted
         self._last_selected = selected_square
         self._last_targets = targets
+        self._last_pending = pending_square
         self._last_message = message
 
         pygame.display.flip()
@@ -368,6 +378,7 @@ class ChessGUI:
         highlighted: set[int],
         selected_square: Optional[int] = None,
         targets: Optional[dict[int, bool]] = None,
+        pending_square: Optional[int] = None,
     ) -> None:
         """Desenha o tabuleiro completo."""
         # Fundo
@@ -380,8 +391,36 @@ class ChessGUI:
                     board, file, rank, highlighted, selected_square, targets or {}
                 )
 
+        # Destino digitado no teclado: desenhado depois das casas, para que a
+        # borda não fique por baixo da peça da casa vizinha.
+        if pending_square is not None:
+            self._draw_pending_square(pending_square)
+
         # Coordenadas
         self._draw_coordinates()
+
+    def _square_origin(self, file: int, rank: int) -> tuple[int, int]:
+        """Canto superior esquerdo de uma casa, em pixels (já com o flip)."""
+        if self._flip:
+            visual_file, visual_rank = 7 - file, rank
+        else:
+            visual_file, visual_rank = file, 7 - rank
+
+        return (
+            self._margin + visual_file * self._square_size,
+            self._margin + visual_rank * self._square_size,
+        )
+
+    def _draw_pending_square(self, square: int) -> None:
+        """Marca com uma borda a casa de destino que já foi digitada."""
+        x, y = self._square_origin(
+            chess.square_file(square), chess.square_rank(square)
+        )
+        pygame.draw.rect(
+            self._screen, PENDING_SQUARE_COLOR,
+            pygame.Rect(x, y, self._square_size, self._square_size),
+            max(3, self._square_size // 16),
+        )
 
     def _draw_square(
         self,
@@ -393,16 +432,7 @@ class ChessGUI:
         targets: Optional[dict[int, bool]] = None,
     ) -> None:
         """Desenha uma casa do tabuleiro com sua peça."""
-        # Calcula a posição visual (considerando flip)
-        if self._flip:
-            visual_file = 7 - file
-            visual_rank = rank
-        else:
-            visual_file = file
-            visual_rank = 7 - rank
-
-        x = self._margin + visual_file * self._square_size
-        y = self._margin + visual_rank * self._square_size
+        x, y = self._square_origin(file, rank)
 
         # Cor da casa
         is_light = (file + rank) % 2 == 0

@@ -11,6 +11,11 @@ Protocolo de eventos:
     - casa: notação algébrica (a1–h8)
     - estado: 0 (desocupada) ou 1 (ocupada)
 
+    A camada de teclado do processo C envia também linhas de status, que
+    começam com '@' e não descrevem sensor nenhum:
+        "@entry|e2||Lance: E2_|Digitando...\n"
+    É o lance em formação, antes do '#' — ver `KeypadEntry`.
+
 Modos suportados:
     - 'subprocess': Inicia o processo C/mock como subprocesso e lê stdout
     - 'stdin': Lê da entrada padrão (útil para piping)
@@ -22,6 +27,7 @@ import sys
 import logging
 import subprocess
 import threading
+from dataclasses import dataclass
 from queue import Queue, Empty
 from typing import Optional
 
@@ -31,6 +37,78 @@ from app.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Marcador das linhas de status do processo C (nunca começam uma casa).
+ENTRY_PREFIX = "@entry|"
+
+
+def _square_or_none(name: str) -> Optional[str]:
+    """Valida um nome de casa vindo do processo C."""
+    name = name.strip().lower()
+    if len(name) == 2 and name[0] in FILES and name[1] in RANKS:
+        return name
+    return None
+
+
+@dataclass(frozen=True)
+class KeypadEntry:
+    """O lance que está sendo digitado no teclado matricial.
+
+    Chega a cada tecla, antes do '#' que envia o lance. Serve para mostrar
+    na tela o que já foi digitado e, com a origem resolvida, destacar os
+    destinos legais daquela peça.
+
+    Attributes:
+        origin: Casa de origem, quando as duas primeiras teclas já formaram
+            uma casa válida (None nos comandos e antes disso).
+        target: Casa de destino, quando as quatro teclas já foram digitadas.
+        text: O que aparece no LCD ("Lance: E2_"); vazio quando não há nada
+            sendo digitado.
+        status: Mensagem curta do processo C ("Digitando...", "Origem vazia").
+    """
+
+    origin: Optional[str] = None
+    target: Optional[str] = None
+    text: str = ""
+    status: str = ""
+
+    @property
+    def active(self) -> bool:
+        """Se há digitação em andamento para mostrar."""
+        return bool(self.text)
+
+    def display(self) -> str:
+        """Linha a exibir na barra de status da aplicação."""
+        if self.text and self.status:
+            return f"{self.text} · {self.status}"
+        return self.text or self.status
+
+
+def parse_entry(line: str) -> Optional[KeypadEntry]:
+    """Desserializa uma linha de digitação do teclado matricial.
+
+    Args:
+        line: Linha no formato "@entry|origem|destino|texto|status".
+
+    Returns:
+        A digitação corrente, ou None se a linha não for desse tipo.
+    """
+    line = line.strip()
+    if not line.startswith(ENTRY_PREFIX):
+        return None
+
+    # Campos a mais (uma versão futura do processo C) são ignorados; a menos
+    # entram vazios, para que a aplicação não quebre com um binário antigo.
+    fields = line[len(ENTRY_PREFIX):].split("|")
+    fields += [""] * (4 - len(fields))
+    origin, target, text, status = fields[:4]
+
+    return KeypadEntry(
+        origin=_square_or_none(origin),
+        target=_square_or_none(target),
+        text=text.strip(),
+        status=status.strip(),
+    )
 
 
 def parse_event(line: str) -> Optional[dict[str, int]]:
@@ -95,6 +173,10 @@ class IPCReader:
         self._process_path = process_path
         self._process_args = list(process_args or [])
         self._queue: Queue[dict[str, int]] = Queue()
+        # Fila separada para a digitação do teclado: ela é informação de
+        # tela, e misturá-la com os eventos de sensor obrigaria todo mundo
+        # que lê um evento a saber distinguir os dois.
+        self._entries: Queue[KeypadEntry] = Queue()
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._process: Optional[subprocess.Popen] = None
@@ -197,6 +279,12 @@ class IPCReader:
                     logger.info("Fonte IPC encerrou (EOF).")
                     break
 
+                entry = parse_entry(line)
+                if entry is not None:
+                    self._entries.put(entry)
+                    logger.debug("Digitação recebida: %s", entry)
+                    continue
+
                 event = parse_event(line)
                 if event is not None:
                     self._queue.put(event)
@@ -219,6 +307,18 @@ class IPCReader:
         """
         try:
             return self._queue.get(timeout=timeout)
+        except Empty:
+            return None
+
+    def read_entry(self) -> Optional[KeypadEntry]:
+        """Lê a próxima digitação do teclado matricial, sem esperar.
+
+        Returns:
+            A digitação corrente, ou None se nada novo chegou. Só a camada
+            de teclado do processo C envia isto.
+        """
+        try:
+            return self._entries.get_nowait()
         except Empty:
             return None
 
