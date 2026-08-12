@@ -135,11 +135,19 @@ class IPCReader:
     def _start_subprocess(self) -> None:
         """Inicia o processo C/mock como subprocesso.
 
+        O mock é um script Python e precisa do interpretador; o processo C é
+        um binário nativo e é executado direto. A extensão do caminho é o que
+        distingue os dois — sem isso, apontar CHESS_C_PROCESS para o binário
+        compilado faria o Python tentar interpretá-lo como fonte.
+
         No Windows, abre uma janela de console separada para que o
         usuário possa digitar jogadas interativamente. No Linux, o
         stdin/stderr são herdados do processo pai (terminal).
         """
-        cmd = [sys.executable, self._process_path, *self._process_args]
+        if self._process_path.endswith(".py"):
+            cmd = [sys.executable, self._process_path, *self._process_args]
+        else:
+            cmd = [self._process_path, *self._process_args]
         logger.info("Iniciando subprocesso: %s", " ".join(cmd))
 
         popen_kwargs = dict(

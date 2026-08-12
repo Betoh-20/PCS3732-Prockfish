@@ -53,6 +53,12 @@ RANDOM_SIR      := random-sir
 MOCK_MODE       ?= gui
 MOCK_ARGS       ?=
 
+# Camada de entrada do processo C: reed (matriz de reed switches) ou
+# keypad (teclado matricial 4x4, lances digitados — plano B)
+INPUT_LAYER     ?= reed
+# Opções extras repassadas ao processo C (ex: --auto-enter, --no-lcd)
+BOARD_INPUT_ARGS ?=
+
 # USE_NIX=1 roda cada alvo dentro do devShell do flake (traz python com as
 # dependências, o Stockfish e a config de fontes). Sem isso, assume-se que o
 # ambiente atual já tem tudo — inclusive quando já se está dentro do shell.
@@ -73,8 +79,36 @@ LICHESS_OPTS   = --mode lichess --lichess-time $(LICHESS_TIME) \
                  --lichess-increment $(LICHESS_INC) \
                  --lichess-timeout $(LICHESS_TIMEOUT)
 
+# ---------------------------------------------------------------------------
+#  Processo C — camadas de entrada (reed switches / teclado matricial)
+# ---------------------------------------------------------------------------
+
+CC        ?= gcc
+CFLAGS    ?= -O2 -Wall -Wextra -std=gnu11
+C_SRC     := $(wildcard src/*.c)
+C_HDR     := $(wildcard src/*.h)
+C_OBJ     := $(C_SRC:src/%.c=build/%.o)
+C_BIN     := build/board_input
+
+# A wiringPi só existe no Raspberry Pi. Sem ela o binário compila do mesmo
+# jeito — o que permite testar o parser do teclado com `make keypad-stdin`
+# em qualquer máquina — mas as camadas que tocam GPIO recusam a rodar.
+HAVE_WIRINGPI ?= $(shell test -f /usr/include/wiringPi.h -o -f /usr/local/include/wiringPi.h && echo 1)
+ifeq ($(HAVE_WIRINGPI),1)
+C_DEFS := -DHAVE_WIRINGPI
+C_LIBS := -lwiringPi
+else
+C_DEFS :=
+C_LIBS :=
+endif
+
+# Ambiente que faz a aplicação usar o processo C no lugar do mock.
+HW_ENV = CHESS_C_PROCESS='$(CURDIR)/$(C_BIN)' \
+         CHESS_C_PROCESS_ARGS='--input $(INPUT_LAYER) $(BOARD_INPUT_ARGS)'
+
 .PHONY: help stockfish lichess-ai random-sir lichess-user lichess-seek \
-        lichess-game mock test deps shell shell-classic check-token clean pdf
+        lichess-game mock test deps shell shell-classic check-token clean pdf \
+        board-input stockfish-hw lichess-ai-hw keypad keypad-stdin
 
 # ---------------------------------------------------------------------------
 #  Ajuda (alvo padrão)
@@ -90,6 +124,11 @@ help:
 	@echo '  make lichess-seek                  procura um oponente humano qualquer'
 	@echo '  make lichess-game GAME=AbCdEfGh    retoma uma partida já em andamento'
 	@echo ''
+	@echo '  make board-input                   compila o processo C (build/board_input)'
+	@echo '  make stockfish-hw                  joga usando o processo C (INPUT_LAYER=$(INPUT_LAYER))'
+	@echo '  make keypad                        idem, com o teclado matricial 4x4'
+	@echo '  make keypad-stdin                  só o processo C, teclas pelo terminal'
+	@echo ''
 	@echo '  make mock                          roda só o mock do hardware'
 	@echo '  make test                          roda a suíte de testes'
 	@echo '  make deps                          instala as dependências Python'
@@ -101,6 +140,7 @@ help:
 	@echo '  COLOR=$(COLOR)  LOG_LEVEL=$(LOG_LEVEL)  ARGS=...'
 	@echo '  STOCKFISH_TIME=$(STOCKFISH_TIME)  STOCKFISH_PATH=$(STOCKFISH_PATH)'
 	@echo '  LICHESS_LEVEL=$(LICHESS_LEVEL)  LICHESS_TIME=$(LICHESS_TIME)  LICHESS_INC=$(LICHESS_INC)  LICHESS_TIMEOUT=$(LICHESS_TIMEOUT)'
+	@echo '  INPUT_LAYER=$(INPUT_LAYER)  BOARD_INPUT_ARGS=...    (alvos com o processo C)'
 	@echo '  USE_NIX=1                          roda o alvo dentro do devShell do flake'
 
 # ---------------------------------------------------------------------------
@@ -142,6 +182,43 @@ lichess-game: check-token
 	$(APP) --mode lichess --lichess-game $(GAME) $(ARGS)
 
 # ---------------------------------------------------------------------------
+#  Processo C — compilação e partidas com hardware de verdade
+# ---------------------------------------------------------------------------
+
+board-input: $(C_BIN)
+
+$(C_BIN): $(C_OBJ)
+	@mkdir -p build
+	$(CC) $(CFLAGS) -o $@ $^ $(C_LIBS)
+	@echo 'Compilado: $@ (wiringPi: $(if $(HAVE_WIRINGPI),sim,não))'
+
+# Todo objeto depende de todos os cabeçalhos: são poucos arquivos, e assim
+# mexer num .h não deixa um .o velho para trás.
+build/%.o: src/%.c $(C_HDR)
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(C_DEFS) -c $< -o $@
+
+# Partida contra o Stockfish lendo o tabuleiro pelo processo C em vez do mock.
+# INPUT_LAYER escolhe a camada: reed (padrão) ou keypad.
+stockfish-hw: $(C_BIN)
+	$(HW_ENV) $(APP) $(STOCKFISH_OPTS) $(ARGS)
+
+# O mesmo, jogando online contra a IA do Lichess.
+lichess-ai-hw: check-token $(C_BIN)
+	$(HW_ENV) $(APP) $(LICHESS_OPTS) --lichess-ai $(LICHESS_LEVEL) $(ARGS)
+
+# Plano B: partida com os lances digitados no teclado matricial 4x4.
+keypad:
+	@$(MAKE) --no-print-directory stockfish-hw INPUT_LAYER=keypad
+
+# Só o processo C, com as teclas vindo do terminal em vez do GPIO: mostra os
+# eventos IPC gerados e não precisa de Raspberry Pi nem de teclado.
+# Digite, por exemplo, "AA2AA4#" para o lance e2e4.
+keypad-stdin: $(C_BIN)
+	$(RUN) ./$(C_BIN) --input keypad --keys stdin --color $(COLOR) \
+	       $(BOARD_INPUT_ARGS)
+
+# ---------------------------------------------------------------------------
 #  Apoio
 # ---------------------------------------------------------------------------
 
@@ -173,7 +250,7 @@ shell-classic:
 
 clean:
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +
-	rm -rf .pytest_cache .mypy_cache .ruff_cache
+	rm -rf .pytest_cache .mypy_cache .ruff_cache build
 
 # ---------------------------------------------------------------------------
 #  Documentação

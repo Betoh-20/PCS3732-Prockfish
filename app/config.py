@@ -6,6 +6,7 @@ utilizados por todos os módulos da camada Python.
 """
 
 import os
+import shlex
 import sys
 from enum import Enum, auto
 from pathlib import Path
@@ -48,6 +49,15 @@ MOCK_PROCESS_PATH = str(
 
 # Caminho do executável do processo C (ou do mock)
 C_PROCESS_PATH = os.environ.get("CHESS_C_PROCESS", MOCK_PROCESS_PATH)
+
+# Argumentos extras repassados ao processo C. É por aqui que se escolhe a
+# camada de entrada dele sem mexer na aplicação:
+#
+#     CHESS_C_PROCESS_ARGS="--input reed"      matriz de reed switches
+#     CHESS_C_PROCESS_ARGS="--input keypad"    teclado matricial 4x4
+#
+# Não vale para o mock em Python, que recebe os argumentos dele em `main`.
+C_PROCESS_ARGS = shlex.split(os.environ.get("CHESS_C_PROCESS_ARGS", ""))
 
 # ---------------------------------------------------------------------------
 #  Stockfish
