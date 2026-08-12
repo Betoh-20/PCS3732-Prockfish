@@ -39,12 +39,6 @@ typedef enum {
     INPUT_KEYPAD
 } input_layer;
 
-typedef enum {
-    LCD_AUTO,   /* ligado na camada de teclado, desligado na de reed */
-    LCD_ON,
-    LCD_OFF
-} lcd_choice;
-
 static void print_usage(const char *program)
 {
     fprintf(stderr,
@@ -74,7 +68,9 @@ static void print_usage(const char *program)
         "  --keys gpio|stdin     Origem das teclas (padrão: gpio). 'stdin'\n"
         "                        aceita 0-9 A-D * # e dispensa hardware.\n"
         "  --auto-enter          Envia o lance na quarta tecla, sem '#'.\n"
-        "  --lcd / --no-lcd      Força ligar/desligar o display 16x2.\n"
+        "  --lcd                 Usa um display 16x2 no I2C para mostrar o\n"
+        "                        que está sendo digitado. Desligado por\n"
+        "                        padrão; sem ele o eco sai só em stderr.\n"
         "  --i2c-bus CAMINHO     Barramento I2C (padrão: %s).\n"
         "  --lcd-addr 0xNN       Endereço do expansor (padrão: 0x%02X).\n",
         program, DEFAULT_I2C_BUS, DEFAULT_LCD_ADDR);
@@ -100,7 +96,9 @@ int main(int argc, char **argv)
     input_layer layer = INPUT_REED;
     player_color color = COLOR_WHITE;
     const char *output_path = NULL;
-    lcd_choice lcd_mode = LCD_AUTO;
+    /* O display é opcional e fica desligado por padrão: a bancada nem sempre
+     * tem um, e o retorno do que está sendo digitado sai igual em stderr. */
+    bool want_lcd = false;
     const char *i2c_bus = DEFAULT_I2C_BUS;
     int lcd_addr = DEFAULT_LCD_ADDR;
     int poll_ms = -1;
@@ -181,9 +179,9 @@ int main(int argc, char **argv)
             auto_enter = true;
 
         } else if (strcmp(arg, "--lcd") == 0) {
-            lcd_mode = LCD_ON;
+            want_lcd = true;
         } else if (strcmp(arg, "--no-lcd") == 0) {
-            lcd_mode = LCD_OFF;
+            want_lcd = false;
         } else if (strcmp(arg, "--i2c-bus") == 0) {
             if ((value = option_value(argc, argv, &i)) == NULL) return 2;
             i2c_bus = value;
@@ -211,8 +209,6 @@ int main(int argc, char **argv)
                         "(sem wiringPi ou sem permissão).\n");
     }
 
-    bool want_lcd = (lcd_mode == LCD_ON)
-        || (lcd_mode == LCD_AUTO && layer == INPUT_KEYPAD);
     if (want_lcd) {
         lcd_init(i2c_bus, lcd_addr);
     }

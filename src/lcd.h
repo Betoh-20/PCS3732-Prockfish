@@ -2,12 +2,17 @@
  * lcd.h — Display LCD 16x2 com expansor I2C (PCF8574), opcional.
  *
  * Adaptado do driver usado no experimento 6 da bancada (`calc_desafio.c`).
- * Serve de retorno visual para a camada de teclado: sem tabuleiro físico, o
- * jogador precisa ver o que está digitando antes de confirmar.
+ * Serve de retorno visual opcional para a camada de teclado, que mostra o
+ * lance sendo digitado antes de confirmar.
  *
- * O display é opcional em todos os sentidos: se o barramento I2C não abrir,
- * `lcd_init()` devolve false e as demais funções viram no-ops — o programa
- * segue funcionando, com o eco indo só para stderr.
+ * O display fica DESLIGADO por padrão (só entra com `--lcd`): o eco em stderr
+ * já cobre a mesma necessidade, e nem toda bancada tem um.
+ *
+ * Quando ligado, ele falha para o lado seguro. `open()` do barramento e
+ * `ioctl(I2C_SLAVE)` funcionam mesmo sem display nenhum ligado — o ioctl só
+ * registra o endereço de destino, não vai ao barramento conferir. Então a
+ * ausência de display só aparece na primeira escrita, e é ali que ele se
+ * desliga: uma mensagem, e o programa segue com o eco em stderr.
  */
 
 #ifndef LCD_H

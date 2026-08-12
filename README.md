@@ -50,7 +50,7 @@ src/
 ├── keypad_layer.c       # Camada 2: teclado matricial 4×4 (lances digitados)
 ├── board.c              # Casas do tabuleiro e espelho de ocupação
 ├── ipc.c                # Serialização dos eventos (stdout ou Named Pipe)
-├── lcd.c                # Display 16x2 por I2C (opcional, retorno do teclado)
+├── lcd.c                # Display 16x2 por I2C (opcional, só com --lcd)
 ├── gpio.c               # Wrapper da wiringPi (compila também sem ela)
 └── runstate.c           # Encerramento limpo em SIGINT/SIGTERM
 ```
@@ -531,9 +531,20 @@ switches emitiria para o mesmo lance.
 --no-initial          Reed: não envia o estado completo na primeira leitura
 --keys gpio|stdin     Teclado: origem das teclas (stdin dispensa hardware)
 --auto-enter          Teclado: envia o lance na quarta tecla, sem '#'
---lcd / --no-lcd      Teclado: força ligar/desligar o display 16x2
+--lcd                 Teclado: usa um display 16x2 no I2C (desligado por padrão)
 --i2c-bus / --lcd-addr   Barramento e endereço do display
 ```
+
+O que está sendo digitado é ecoado em stderr (`[teclado] Digitando... | Lance:
+E2_`), que aparece no terminal de onde a aplicação foi iniciada. Quem tiver um
+display 16x2 no I2C pode passar `--lcd` para ver a mesma coisa nele.
+
+> [!NOTE]
+> O `--lcd` fica desligado por padrão de propósito. Um `open()` do barramento
+> e o `ioctl(I2C_SLAVE)` funcionam mesmo sem display ligado — o ioctl só
+> registra o endereço, não confere quem está lá —, então a ausência do display
+> só aparece na primeira escrita. Quando isso acontece, o processo imprime uma
+> mensagem, desliga o display e segue com o eco em stderr.
 
 Pinos padrão (numeração BCM): a matriz de reed usa linhas `4,5,6,12,13,16,19,20`
 e colunas `21,22,23,24,25,26,27,17`; o teclado usa linhas `16,20,21,26` e

@@ -35,10 +35,21 @@ static const uint8_t LCD_ROW_ADDR[2] = { 0x80, 0xC0 };
 
 static int g_fd = -1;
 
-static void lcd_write_byte(uint8_t bits, uint8_t mode)
+/* Escreve um byte no display.
+ *
+ * Na primeira falha o display é DESLIGADO em vez de a falha ser só
+ * reportada. Sem isso, um display ausente ou mal endereçado custa 34
+ * mensagens de erro e ~100 ms de `usleep` a cada tecla — o `ioctl(I2C_SLAVE)`
+ * não vai ao barramento conferir quem está lá, então uma escrita que falha é
+ * a primeira notícia de que não há display, e a única útil.
+ *
+ * Returns:
+ *     true se o byte foi escrito.
+ */
+static bool lcd_write_byte(uint8_t bits, uint8_t mode)
 {
     if (g_fd < 0) {
-        return;
+        return false;
     }
 
     uint8_t high = mode | (bits & 0xF0) | LCD_BACKLIGHT;
@@ -52,9 +63,14 @@ static void lcd_write_byte(uint8_t bits, uint8_t mode)
     if (write(g_fd, buffer, sizeof(buffer)) != (ssize_t)sizeof(buffer)) {
         /* Um display que sumiu no meio da partida não é motivo para
          * derrubar o processo: o jogo continua pelo eco em stderr. */
-        fprintf(stderr, "[lcd] Falha na escrita I2C: %s\n", strerror(errno));
+        fprintf(stderr, "[lcd] Escrita I2C falhou (%s) — display desligado. "
+                        "O eco continua no terminal.\n", strerror(errno));
+        close(g_fd);
+        g_fd = -1;
+        return false;
     }
     usleep(3000);  /* tempo de processamento do controlador */
+    return true;
 }
 
 bool lcd_init(const char *bus, int addr)
@@ -81,6 +97,14 @@ bool lcd_init(const char *bus, int addr)
     lcd_write_byte(0x06, LCD_MODE_CMD);  /* avanço automático do cursor */
     lcd_write_byte(0x01, LCD_MODE_CMD);  /* limpa */
     usleep(3000);
+
+    /* A sequência acima é a primeira conversa de verdade com o display: se
+     * ele não estiver no endereço, ela falhou e já se desligou sozinha. */
+    if (!lcd_available()) {
+        fprintf(stderr, "[lcd] Nenhum display em 0x%02X — seguindo sem ele.\n",
+                addr);
+        return false;
+    }
     return true;
 #else
     (void)bus;

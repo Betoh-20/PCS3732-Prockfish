@@ -56,7 +56,7 @@ MOCK_ARGS       ?=
 # Camada de entrada do processo C: reed (matriz de reed switches) ou
 # keypad (teclado matricial 4x4, lances digitados — plano B)
 INPUT_LAYER     ?= reed
-# Opções extras repassadas ao processo C (ex: --auto-enter, --no-lcd)
+# Opções extras repassadas ao processo C (ex: --auto-enter, --lcd)
 BOARD_INPUT_ARGS ?=
 
 # USE_NIX=1 roda cada alvo dentro do devShell do flake (traz python com as
