@@ -68,6 +68,8 @@ static void print_usage(const char *program)
         "  --keys gpio|stdin     Origem das teclas (padrão: gpio). 'stdin'\n"
         "                        aceita 0-9 A-D * # e dispensa hardware.\n"
         "  --auto-enter          Envia o lance na quarta tecla, sem '#'.\n"
+        "  --raw                 Conferência de bancada: mostra que tecla foi\n"
+        "                        lida e em que interseção, sem enviar nada.\n"
         "  --lcd                 Usa um display 16x2 no I2C para mostrar o\n"
         "                        que está sendo digitado. Desligado por\n"
         "                        padrão; sem ele o eco sai só em stderr.\n"
@@ -108,6 +110,7 @@ int main(int argc, char **argv)
     bool reed_emit_initial = true;
     bool keys_from_stdin = false;
     bool auto_enter = false;
+    bool raw_mode = false;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -177,6 +180,8 @@ int main(int argc, char **argv)
 
         } else if (strcmp(arg, "--auto-enter") == 0) {
             auto_enter = true;
+        } else if (strcmp(arg, "--raw") == 0) {
+            raw_mode = true;
 
         } else if (strcmp(arg, "--lcd") == 0) {
             want_lcd = true;
@@ -221,6 +226,7 @@ int main(int argc, char **argv)
         config.color = color;
         config.keys_from_stdin = keys_from_stdin;
         config.auto_enter = auto_enter;
+        config.raw_mode = raw_mode;
         if (poll_ms > 0)  config.poll_ms = poll_ms;
         if (debounce > 0) config.debounce_cycles = debounce;
         if (polarity >= 0) config.active_low = (polarity == 1);

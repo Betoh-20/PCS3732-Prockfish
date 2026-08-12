@@ -422,6 +422,7 @@ void keypad_config_default(keypad_config *config)
     config->poll_ms = 25;
     config->auto_enter = false;
     config->keys_from_stdin = false;
+    config->raw_mode = false;
     config->color = COLOR_WHITE;
 }
 
@@ -438,8 +439,13 @@ static void keypad_setup_pins(const keypad_config *config)
     }
 }
 
-/* Uma varredura: devolve a primeira tecla pressionada, ou '\0'. */
-static char keypad_scan_once(const keypad_config *config)
+/* Uma varredura: devolve a primeira tecla pressionada, ou '\0'.
+ *
+ * `out_row` e `out_col` (opcionais) recebem a interseção onde a tecla foi
+ * encontrada — é o que o modo de bancada precisa para dizer qual par de
+ * pinos fechou. */
+static char keypad_scan_once(const keypad_config *config,
+                             int *out_row, int *out_col)
 {
     char found = '\0';
 
@@ -451,6 +457,8 @@ static char keypad_scan_once(const keypad_config *config)
             bool level = gpio_read(config->column_pins[col]);
             if (config->active_low ? !level : level) {
                 found = KEYMAP[row][col];
+                if (out_row) *out_row = row;
+                if (out_col) *out_col = col;
                 break;
             }
         }
@@ -463,6 +471,21 @@ static char keypad_scan_once(const keypad_config *config)
 
 static void keypad_announce(const keypad_state *state)
 {
+    if (state->config.raw_mode) {
+        fprintf(stderr,
+                "[bancada] Modo de conferência da fiação: cada tecla mostra\n"
+                "[bancada] em que interseção da matriz ela foi lida. Nenhum\n"
+                "[bancada] evento é enviado. Ctrl+C encerra.\n"
+                "[bancada] Linhas:  %d %d %d %d\n"
+                "[bancada] Colunas: %d %d %d %d\n"
+                "[bancada] Se nenhuma tecla aparecer, tente --active-low.\n",
+                state->config.row_pins[0], state->config.row_pins[1],
+                state->config.row_pins[2], state->config.row_pins[3],
+                state->config.column_pins[0], state->config.column_pins[1],
+                state->config.column_pins[2], state->config.column_pins[3]);
+        return;
+    }
+
     fprintf(stderr,
             "[teclado] Camada de teclado 4x4 ativa (pecas %s).\n"
             "[teclado]   Lance: coluna + fileira + coluna + fileira, ex: A2A4\n"
@@ -509,9 +532,11 @@ static int keypad_run_gpio(keypad_state *state)
     char candidate = '\0';  /* tecla vista na varredura mais recente */
     char current = '\0';    /* tecla já confirmada (só muda depois de estável) */
     int stable = 0;
+    int cand_row = -1, cand_col = -1;
 
     while (app_running()) {
-        char key = keypad_scan_once(config);
+        int row = -1, col = -1;
+        char key = keypad_scan_once(config, &row, &col);
 
         if (key == candidate) {
             if (stable < config->debounce_cycles) {
@@ -519,6 +544,8 @@ static int keypad_run_gpio(keypad_state *state)
             }
         } else {
             candidate = key;
+            cand_row = row;
+            cand_col = col;
             stable = 1;
         }
 
@@ -526,7 +553,15 @@ static int keypad_run_gpio(keypad_state *state)
          * não repete, e soltar volta o estado para '\0' sem gerar evento. */
         if (stable >= config->debounce_cycles && candidate != current) {
             current = candidate;
-            if (current != '\0') {
+            if (current == '\0') {
+                /* nada a fazer: é a tecla sendo solta */
+            } else if (config->raw_mode) {
+                fprintf(stderr,
+                        "[bancada] tecla '%c'  (linha %d = pino %d, "
+                        "coluna %d = pino %d)\n",
+                        current, cand_row, config->row_pins[cand_row],
+                        cand_col, config->column_pins[cand_col]);
+            } else {
                 keypad_key(state, current);
             }
         }
@@ -548,7 +583,9 @@ int keypad_layer_run(const keypad_config *config)
     keypad_status(&state, "Digite o lance");
 
     keypad_announce(&state);
-    keypad_refresh(&state);
+    if (!config->raw_mode) {
+        keypad_refresh(&state);
+    }
 
     int result = config->keys_from_stdin
         ? keypad_run_stdin(&state)

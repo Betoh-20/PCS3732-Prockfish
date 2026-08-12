@@ -531,6 +531,7 @@ switches emitiria para o mesmo lance.
 --no-initial          Reed: não envia o estado completo na primeira leitura
 --keys gpio|stdin     Teclado: origem das teclas (stdin dispensa hardware)
 --auto-enter          Teclado: envia o lance na quarta tecla, sem '#'
+--raw                 Teclado: conferência de bancada (ver abaixo)
 --lcd                 Teclado: usa um display 16x2 no I2C (desligado por padrão)
 --i2c-bus / --lcd-addr   Barramento e endereço do display
 ```
@@ -548,7 +549,37 @@ display 16x2 no I2C pode passar `--lcd` para ver a mesma coisa nele.
 
 Pinos padrão (numeração BCM): a matriz de reed usa linhas `4,5,6,12,13,16,19,20`
 e colunas `21,22,23,24,25,26,27,17`; o teclado usa linhas `16,20,21,26` e
-colunas `19,13,6,5` — a fiação já montada na bancada.
+colunas `19,13,6,5` — a fiação já montada na bancada (a mesma do experimento 6).
+Para mudar, edite `keypad_config_default()` em [src/keypad_layer.c](src/keypad_layer.c).
+
+### Conferir a fiação do teclado
+
+Antes de jogar, vale confirmar que cada tecla chega onde se espera:
+
+```bash
+./build/board_input --input keypad --raw
+```
+
+Cada tecla pressionada imprime em que interseção da matriz ela foi lida:
+
+```
+[bancada] tecla 'A'  (linha 0 = pino 16, coluna 3 = pino 19)
+```
+
+Nenhum evento é enviado nesse modo. O que conferir:
+
+| Sintoma | Causa provável |
+|---------|----------------|
+| Nenhuma tecla aparece | Polaridade invertida — tente `--active-low` |
+| A tecla sai trocada por outra da mesma coluna | Ordem dos pinos de linha |
+| A tecla sai trocada por outra da mesma linha | Ordem dos pinos de coluna |
+| Linhas e colunas trocadas entre si | `row_pins` e `column_pins` invertidos |
+
+Confira também a **serigrafia**: o código assume o teclado 4×4 padrão, com
+`A B C D` na quarta coluna e `* 0 # D` na última linha. O experimento 6 usava
+as mesmas teclas com rótulos de calculadora (`+ - * /` e `! 0 = /`) — se o
+teclado da bancada for esse, a tecla `A` é a marcada `+`, a `B` é a `-`, o
+`#` (confirmar) é o `=` e o `*` (apagar) é o `!`.
 
 ## Destaques no tabuleiro
 

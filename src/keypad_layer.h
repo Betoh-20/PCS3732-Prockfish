@@ -79,6 +79,11 @@ typedef struct {
      * Permite exercitar o parser e o IPC sem hardware nenhum. */
     bool keys_from_stdin;
 
+    /* Modo de bancada: em vez de interpretar as teclas, imprime qual tecla
+     * foi detectada e em que interseção da matriz. É como se confere a
+     * fiação, a polaridade e a serigrafia do teclado de uma vez só. */
+    bool raw_mode;
+
     /* Cor das peças do jogador: define a posição inicial do espelho. */
     player_color color;
 } keypad_config;
