@@ -32,6 +32,8 @@ app/
 ├── stockfish_engine.py  # Interface UCI com Stockfish
 ├── lichess_client.py    # Cliente da Lichess Board API
 ├── gui.py               # Interface gráfica com pygame
+├── launcher.py          # Configuração de uma partida (modo, entrada, engine)
+├── menu.py              # Menu que escolhe essa configuração (janela ou terminal)
 └── main.py              # Ponto de entrada
 ```
 
@@ -100,6 +102,74 @@ set CHESS_STOCKFISH_PATH=C:\caminho\para\stockfish.exe
 
 ## Uso
 
+### Menu de configuração
+
+Tudo o que os alvos do `Makefile` escolhem por variáveis — modo de jogo,
+oponente, cor das peças, camada de entrada, tempo da engine, controle de tempo
+do Lichess — também é escolhido na própria interface. Sem argumentos, a
+aplicação abre o menu:
+
+```bash
+python -m app.main        # ou: make menu
+```
+
+```
+Tabuleiro de Xadrez Eletrônico
+Stockfish (1s por lance) · peças brancas · entrada: mock (gui)
+──────────────────────────────────────────────────────────────
+  Modo de jogo                          Stockfish local
+  Tempo por lance (s)              <       1.0       >
+  Cor das peças físicas                          brancas
+  Entrada do tabuleiro               mock (sem hardware)
+  ...
+  INICIAR PARTIDA
+  Compilar processo C (make board-input)
+  Sair
+──────────────────────────────────────────────────────────────
+Equivalente no terminal: make stockfish COLOR=white
+Setas: escolher/alterar · Enter: editar ou iniciar · F5: compilar · Esc: sair
+```
+
+| Tecla | Ação |
+|-------|------|
+| `↑` `↓` | Escolhe a linha |
+| `←` `→` | Altera o valor da linha |
+| `Enter` | Edita um campo de texto, alterna um sim/não ou aciona a linha |
+| `F5` | Compila o processo C (o mesmo que `make board-input`) |
+| `Esc` / `Q` | Sai da aplicação |
+
+O mouse faz o mesmo: um clique escolhe a linha, o clique seguinte altera o
+valor (botão direito volta) e a roda rola a lista.
+
+Detalhes que o menu resolve sozinho:
+
+- **as linhas mudam com o que já foi escolhido** — o nível da IA só aparece no
+  modo Lichess contra a IA, as opções do teclado 4×4 só com essa camada
+  selecionada;
+- **avisa antes de começar** — token do Lichess ausente, controle de tempo que
+  a Board API recusa, processo C ainda não compilado e Stockfish fora do
+  `PATH` aparecem no rodapé, e a partida só começa quando não há impedimento;
+- **compila o processo C** sem sair da interface (por `make`, ou chamando o
+  compilador direto quando não há `make` na máquina);
+- **mostra o comando equivalente** (`make ...` ou `python -m app.main ...`),
+  para repetir a mesma partida pelo terminal;
+- **volta quando a partida acaba** — nas [opções da
+  partida](#opções-durante-a-partida), "Voltar ao menu" traz o jogador de
+  volta para escolher a próxima sem reabrir o programa; "Sair" (ou fechar a
+  janela) encerra a aplicação.
+
+Sem display (por SSH, por exemplo) o mesmo menu aparece como uma lista
+numerada no terminal.
+
+Opções passadas na linha de comando entram no menu como valores iniciais, o
+que também vale para os alvos do `Makefile`:
+
+```bash
+make menu COLOR=black                    # abre o menu já com as pretas
+python -m app.main --menu --mode lichess --lichess-ai 6
+python -m app.main --no-menu --mode stockfish   # começa direto, sem menu
+```
+
 ### Atalhos do Makefile
 
 Todos os modos de execução têm um alvo no `Makefile` da raiz do repositório.
@@ -111,6 +181,7 @@ make
 
 | Alvo | O que faz |
 |------|-----------|
+| `make menu` | Abre o [menu de configuração](#menu-de-configuração) e joga a partir dele |
 | `make stockfish` | Partida offline contra o Stockfish (não precisa de rede nem de token) |
 | `make lichess-ai` | Partida contra a IA do Lichess (nível `LICHESS_LEVEL`, padrão 3) |
 | `make random-sir` | Desafia a conta `random-sir` no Lichess |
@@ -198,9 +269,15 @@ para o modo interativo por terminal.
 python -m app.main --help
 
 Opções:
+  --menu / --no-menu           Abre (ou dispensa) o menu de configuração.
+                               Sem argumento nenhum, o menu é o padrão
   --mode {stockfish,lichess}   Modo de jogo (padrão: stockfish)
   --color {white,black}        Cor do jogador (padrão: white)
   --ipc {subprocess,stdin,pipe} Modo de IPC (padrão: subprocess)
+  --input {mock,reed,keypad}   Camada de entrada (as duas últimas usam o
+                               processo C de build/board_input)
+  --board-input-args "..."     Opções extras do processo C
+  --mock-mode {gui,interactive,auto}  Como o mock do hardware é operado
   --stockfish-path PATH        Caminho do Stockfish
   --stockfish-time SECONDS     Tempo de cálculo (padrão: 1.0)
   --token TOKEN                Token Lichess (evite: fica visível em `ps`)
@@ -219,6 +296,31 @@ Opções:
 
 O tabuleiro é desenhado da perspectiva do jogador físico: com `--color black`
 as pretas já ficam embaixo, e `--flip` inverte essa orientação padrão.
+
+### Opções durante a partida
+
+Com a partida em andamento, `Esc` (ou um toque na barra de status) abre o menu
+de ações sobre o tabuleiro:
+
+| Ação | Quando aparece | O que faz |
+|------|----------------|-----------|
+| **Reiniciar partida** | modo Stockfish | Volta à posição inicial e recomeça, mantendo cor e camada de entrada |
+| **Abortar partida** | Lichess, antes de os dois lados jogarem | `abort` na Board API — ninguém perde |
+| **Oferecer / Aceitar empate** | Lichess | Propõe empate, ou aceita o que o oponente propôs |
+| **Desistir** | partida em andamento | Encerra a partida; no Lichess, manda `resign` |
+| **Voltar ao menu** | sempre | Encerra a partida e volta ao menu de configuração |
+| **Sair** | sempre | Fecha a aplicação |
+
+Enquanto a partida está viva, essas ações pedem confirmação — num tabuleiro
+operado por toque, um encostão não pode custar a partida. Depois do fim da
+partida o menu abre sozinho, sem confirmação, com o que ainda faz sentido:
+jogar de novo, voltar ao menu ou sair.
+
+Uma proposta de empate feita pelo oponente aparece na barra de status e vira
+"Aceitar empate" no menu; antes era preciso responder pelo site do Lichess.
+
+Reiniciar não mexe no que os sensores estão lendo — a instrução da barra de
+status passa a pedir as peças que faltam para montar a posição inicial.
 
 ### Jogar contra Lichess (online)
 
@@ -449,12 +551,22 @@ make keypad
 make lichess-ai-hw INPUT_LAYER=keypad
 ```
 
-Por baixo, os alvos apenas apontam a aplicação para o binário em vez do mock:
+A mesma escolha está no [menu](#menu-de-configuração), em "Entrada do
+tabuleiro" — e, com o binário ainda não compilado, a linha "Compilar processo
+C" resolve isso ali mesmo.
+
+Por baixo, os alvos apenas apontam a aplicação para o binário em vez do mock,
+o que também se faz direto pela linha de comando:
 
 ```bash
+# Pelas opções da aplicação
+python -m app.main --no-menu --mode stockfish --input keypad \
+                   --board-input-args "--keys stdin"
+
+# Ou pelas variáveis de ambiente que os alvos do Makefile usam
 CHESS_C_PROCESS=./build/board_input \
 CHESS_C_PROCESS_ARGS='--input keypad' \
-python -m app.main --mode stockfish
+python -m app.main --no-menu --mode stockfish
 ```
 
 ### Teclado 4×4 — como digitar um lance
@@ -487,6 +599,11 @@ casa sendo redigitada. Um terceiro toque volta para a letra simples
 O roque é digitado em dois lances (rei e depois torre), igual ao que se faz
 no tabuleiro físico. A promoção vira dama automaticamente, como na camada de
 reed switches.
+
+O monitor acompanha a digitação: cada tecla aparece na barra de status e, com
+a casa de origem já digitada, o tabuleiro destaca os destinos possíveis
+daquela peça — ver [Destaques no tabuleiro](#no-teclado-matricial). Não é
+preciso enxergar o LCD para saber o que já foi digitado.
 
 #### Comandos
 
@@ -588,9 +705,10 @@ nenhum outro ligou — a GUI mostra para onde essa peça pode ir:
 
 | Marca | Significado |
 |-------|-------------|
-| Casa verde | Casa de onde a peça foi levantada |
+| Casa verde | Casa de onde a peça foi levantada (ou a origem digitada no teclado) |
 | Ponto no centro | Destino legal, casa livre |
 | Anel vermelho | Destino legal que captura uma peça (inclui *en passant*) |
+| Borda âmbar | Destino já digitado no teclado, ainda não confirmado com `#` |
 | Casa amarela | Origem e destino do último lance |
 
 Os destinos saem dos lances legais do tabuleiro virtual, então já consideram
@@ -598,6 +716,20 @@ xeque e peças cravadas: uma peça sem lance legal não recebe marca nenhuma.
 Nada é destacado fora do turno do jogador, nem quando a peça foi levantada
 para desfazer um movimento ilegal — aí o que vale é a instrução da barra de
 status.
+
+### No teclado matricial
+
+Sem peça levantada não há o que ler dos sensores, então quem faz esse papel
+são as próprias teclas: **as duas primeiras já escolhem a peça**. Digitar
+`AA2` (e2) destaca e2 e mostra os destinos daquela peça, e a barra de status
+mostra o que foi digitado até agora — `Lance: E2_ · Digitando...`, o mesmo
+par que aparece no LCD. Digitando o destino, ele ganha a borda âmbar até o
+`#` confirmar.
+
+Só uma peça do próprio jogador é destacada: apontar para uma casa vazia ou
+para uma peça do oponente é erro de digitação, e destacá-la sugeriria um
+lance que não existe. Nos comandos (`0-1` retirar, `0-2` colocar) a casa
+digitada não é uma peça escolhida, então não há previsão nenhuma.
 
 ## Roque em duas etapas
 
@@ -699,6 +831,39 @@ O roque também é aceito num evento só (`e1:0,g1:1,h1:0,f1:1`), mas na mão do
 jogador ele chega em duas etapas — veja [Roque em duas
 etapas](#roque-em-duas-etapas).
 
+### Linhas de digitação (`@entry`)
+
+A camada de teclado manda, além dos eventos, o lance que ainda está sendo
+digitado. Essas linhas começam com `@` — caractere que nenhuma casa tem —
+para que quem só entende `casa:estado` as ignore sem tropeçar:
+
+```
+@entry|origem|destino|texto|status\n
+```
+
+| Campo | Conteúdo |
+|-------|----------|
+| `origem` | Casa de origem, assim que as duas primeiras teclas formam uma casa (vazio nos comandos) |
+| `destino` | Casa de destino, quando as quatro teclas já foram digitadas |
+| `texto` | O que aparece no LCD (`Lance: E2_`); vazio quando não há nada digitado |
+| `status` | Mensagem curta do processo C (`Digitando...`, `Origem vazia`) |
+
+Digitando `AA2AA4#`, a sequência é:
+
+```
+@entry|||Lance: A_|Digitando...
+@entry|||Lance: E_|Coluna trocada
+@entry|e2||Lance: E2_|Digitando...
+@entry|e2||Lance: E2A_|Digitando...
+@entry|e2||Lance: E2E_|Coluna trocada
+@entry|e2|e4|Lance: E2E4|Digitando...
+e2:0,e4:1
+@entry||||Enviado e2e4
+```
+
+A camada reed não emite essas linhas: nela a peça na mão já é visível pelos
+próprios sensores.
+
 ## Configuração via variáveis de ambiente
 
 | Variável | Descrição | Padrão |
@@ -720,13 +885,32 @@ etapas](#roque-em-duas-etapas).
 
 ## Teclas de Atalho
 
+### Menu de configuração
+
+| Tecla | Ação |
+|-------|------|
+| `↑` `↓` | Escolher a linha |
+| `←` `→` | Alterar o valor |
+| `Enter` | Editar o campo, alternar sim/não ou acionar a linha |
+| `F5` | Compilar o processo C |
+| `ESC` / `Q` | Sair |
+
 ### GUI da aplicação
 
 | Tecla | Ação |
 |-------|------|
+| `ESC` | Abre as [opções da partida](#opções-durante-a-partida) (fecha a janela durante as esperas) |
 | `F` | Inverter tabuleiro |
-| `ESC` | Fechar aplicação |
 | `Q/R/B/N` | Selecionar peça de promoção |
+
+### Opções da partida (menu aberto)
+
+| Tecla | Ação |
+|-------|------|
+| `↑` `↓` | Escolher a ação |
+| `Enter` | Acionar (ações sem volta pedem confirmação) |
+| `S` / `N` | Responder ao "tem certeza?" |
+| `ESC` | Fechar o menu |
 
 ### GUI do mock (matriz de botões)
 

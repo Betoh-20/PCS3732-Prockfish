@@ -106,7 +106,7 @@ endif
 HW_ENV = CHESS_C_PROCESS='$(CURDIR)/$(C_BIN)' \
          CHESS_C_PROCESS_ARGS='--input $(INPUT_LAYER) $(BOARD_INPUT_ARGS)'
 
-.PHONY: help stockfish lichess-ai random-sir lichess-user lichess-seek \
+.PHONY: help menu stockfish lichess-ai random-sir lichess-user lichess-seek \
         lichess-game mock test deps shell shell-classic check-token clean pdf \
         board-input stockfish-hw lichess-ai-hw keypad keypad-stdin
 
@@ -116,6 +116,9 @@ HW_ENV = CHESS_C_PROCESS='$(CURDIR)/$(C_BIN)' \
 
 help:
 	@echo 'Tabuleiro de Xadrez Eletrônico — alvos disponíveis:'
+	@echo ''
+	@echo '  make menu                          escolhe tudo na interface (modo,'
+	@echo '                                     oponente, cor, entrada) e joga'
 	@echo ''
 	@echo '  make stockfish                     joga contra o Stockfish local'
 	@echo '  make lichess-ai                    joga contra a IA do Lichess (nível $(LICHESS_LEVEL))'
@@ -146,6 +149,13 @@ help:
 # ---------------------------------------------------------------------------
 #  Modos de jogo
 # ---------------------------------------------------------------------------
+
+# Menu na própria aplicação: as escolhas que os alvos abaixo fazem por
+# variáveis (modo, oponente, cor, camada de entrada, tempo da engine) são
+# feitas na tela, e o menu volta ao fim de cada partida. As variáveis daqui
+# continuam valendo — elas entram como os valores iniciais do menu.
+menu:
+	$(APP) --menu $(ARGS)
 
 # Partida offline contra o Stockfish. Não precisa de rede nem de token.
 stockfish:

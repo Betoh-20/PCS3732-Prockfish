@@ -33,6 +33,7 @@ from app.config import (
     LIGHT_SQUARE_COLOR, DARK_SQUARE_COLOR, HIGHLIGHT_COLOR,
     INVALID_MOVE_COLOR, BG_COLOR, STATUS_BG_COLOR, TEXT_COLOR,
     COORD_COLOR, SELECTED_SQUARE_COLOR, MOVE_HINT_COLOR, CAPTURE_HINT_COLOR,
+    PENDING_SQUARE_COLOR,
 )
 
 logger = logging.getLogger(__name__)
@@ -144,11 +145,25 @@ class ChessGUI:
         self._window_width = board_size + 2 * self._margin
         self._window_height = board_size + 2 * self._margin + STATUS_BAR_HEIGHT
 
+        # Menu da partida: ações oferecidas pela aplicação (reiniciar,
+        # desistir, voltar ao menu...) e o que o jogador escolheu nele.
+        self._actions: list[tuple[str, str, bool]] = []
+        self._action_queue: list[str] = []
+        self._menu_open = False
+        self._menu_index = 0
+        self._confirm: Optional[tuple[str, str, bool]] = None
+        # Áreas clicáveis da última pintura: linhas do menu, botões do
+        # "tem certeza?" e a barra de status (que abre o menu ao toque).
+        self._menu_rects = []
+        self._confirm_rects = []
+        self._status_rect = None
+
         # Estado para renderização incremental
         self._last_board_fen: Optional[str] = None
         self._last_highlighted: Optional[set] = None
         self._last_selected: Optional[int] = None
         self._last_targets: Optional[dict[int, bool]] = None
+        self._last_pending: Optional[int] = None
         self._last_message: Optional[str] = None
         self._message_color = TEXT_COLOR
         self._needs_full_redraw = True
@@ -208,6 +223,73 @@ class ChessGUI:
         self._flip = flip
         self._needs_full_redraw = True
 
+    # -- Menu da partida ----------------------------------------------------
+
+    def set_actions(self, actions: list[tuple[str, str, bool]]) -> None:
+        """Define as ações do menu da partida.
+
+        Args:
+            actions: Lista de `(id, rótulo, confirmar)`. O `id` é devolvido
+                por `take_action()`; `confirmar` faz o menu perguntar "tem
+                certeza?" antes — é o que separa desistir de trocar de tela.
+
+        Uma lista vazia desliga o menu, e aí o Esc volta a fechar a janela:
+        é disso que as esperas (busca de oponente) dependem para poder ser
+        canceladas.
+        """
+        if actions == self._actions:
+            return
+        self._actions = list(actions)
+        if not actions:
+            self._close_menu()
+        self._menu_index = min(self._menu_index, max(0, len(self._actions) - 1))
+        if self._menu_open:
+            self._needs_full_redraw = True
+
+    def take_action(self) -> Optional[str]:
+        """Retira a próxima ação escolhida pelo jogador, se houver."""
+        return self._action_queue.pop(0) if self._action_queue else None
+
+    def open_menu(self) -> None:
+        """Abre o menu da partida (nada acontece sem ações definidas)."""
+        if not self._actions or self._menu_open:
+            return
+        self._menu_open = True
+        self._menu_index = 0
+        self._confirm = None
+
+    @property
+    def menu_is_open(self) -> bool:
+        """Se o menu da partida está na tela."""
+        return self._menu_open
+
+    def _close_menu(self) -> None:
+        self._menu_open = False
+        self._confirm = None
+        # O menu é desenhado por cima do tabuleiro: fechá-lo exige repintar.
+        self._needs_full_redraw = True
+
+    def _choose_action(self, index: int) -> None:
+        """Aciona a linha escolhida — ou pede confirmação antes."""
+        if not 0 <= index < len(self._actions):
+            return
+        action = self._actions[index]
+        self._menu_index = index
+        if action[2]:
+            self._confirm = action
+            self._needs_full_redraw = True
+            return
+        self._action_queue.append(action[0])
+        self._close_menu()
+
+    def _resolve_confirmation(self, confirmed: bool) -> None:
+        """Responde ao "tem certeza?" e volta ao menu (ou executa a ação)."""
+        action, self._confirm = self._confirm, None
+        self._needs_full_redraw = True
+        if confirmed and action:
+            self._action_queue.append(action[0])
+            self._close_menu()
+
     def update(
         self,
         board: chess.Board,
@@ -216,6 +298,7 @@ class ChessGUI:
         message_type: str = "info",
         selected_square: Optional[int] = None,
         legal_targets: Optional[dict[int, bool]] = None,
+        pending_square: Optional[int] = None,
     ) -> None:
         """Atualiza a renderização do tabuleiro.
 
@@ -228,6 +311,8 @@ class ChessGUI:
                 enquanto ela estiver na mão.
             legal_targets: Destinos legais dessa peça, no formato
                 {casa: é_captura}. Vazios recebem um ponto; capturas, um anel.
+            pending_square: Destino já digitado no teclado matricial mas
+                ainda não confirmado — marcado com uma borda.
         """
         if self._screen is None:
             return
@@ -244,16 +329,26 @@ class ChessGUI:
         fen_changed = current_fen != self._last_board_fen
         highlight_changed = highlighted != self._last_highlighted
         selection_changed = (
-            selected_square != self._last_selected or targets != self._last_targets
+            selected_square != self._last_selected
+            or targets != self._last_targets
+            or pending_square != self._last_pending
         )
         message_changed = message != self._last_message
+
+        # Com o menu aberto, o quadro é repintado inteiro: o painel é
+        # semitransparente, e sobrepô-lo ao quadro anterior escureceria o
+        # tabuleiro um pouco mais a cada volta, até apagá-lo.
+        if self._menu_open:
+            self._needs_full_redraw = True
 
         redrew_board = (
             self._needs_full_redraw
             or fen_changed or highlight_changed or selection_changed
         )
         if redrew_board:
-            self._draw_full(board, highlighted, selected_square, targets)
+            self._draw_full(
+                board, highlighted, selected_square, targets, pending_square
+            )
             self._needs_full_redraw = False
 
         # `_draw_full` limpa a janela inteira, inclusive a barra de status:
@@ -261,11 +356,17 @@ class ChessGUI:
         if redrew_board or message_changed:
             self._draw_status_bar(board, message, message_type)
 
+        # O menu vem por cima de tudo — e é repintado a cada quadro, já que
+        # qualquer redesenho do tabuleiro o apagaria.
+        if self._menu_open:
+            self._draw_action_menu()
+
         # Atualiza estado para próxima comparação
         self._last_board_fen = current_fen
         self._last_highlighted = highlighted
         self._last_selected = selected_square
         self._last_targets = targets
+        self._last_pending = pending_square
         self._last_message = message
 
         pygame.display.flip()
@@ -277,6 +378,7 @@ class ChessGUI:
         highlighted: set[int],
         selected_square: Optional[int] = None,
         targets: Optional[dict[int, bool]] = None,
+        pending_square: Optional[int] = None,
     ) -> None:
         """Desenha o tabuleiro completo."""
         # Fundo
@@ -289,8 +391,36 @@ class ChessGUI:
                     board, file, rank, highlighted, selected_square, targets or {}
                 )
 
+        # Destino digitado no teclado: desenhado depois das casas, para que a
+        # borda não fique por baixo da peça da casa vizinha.
+        if pending_square is not None:
+            self._draw_pending_square(pending_square)
+
         # Coordenadas
         self._draw_coordinates()
+
+    def _square_origin(self, file: int, rank: int) -> tuple[int, int]:
+        """Canto superior esquerdo de uma casa, em pixels (já com o flip)."""
+        if self._flip:
+            visual_file, visual_rank = 7 - file, rank
+        else:
+            visual_file, visual_rank = file, 7 - rank
+
+        return (
+            self._margin + visual_file * self._square_size,
+            self._margin + visual_rank * self._square_size,
+        )
+
+    def _draw_pending_square(self, square: int) -> None:
+        """Marca com uma borda a casa de destino que já foi digitada."""
+        x, y = self._square_origin(
+            chess.square_file(square), chess.square_rank(square)
+        )
+        pygame.draw.rect(
+            self._screen, PENDING_SQUARE_COLOR,
+            pygame.Rect(x, y, self._square_size, self._square_size),
+            max(3, self._square_size // 16),
+        )
 
     def _draw_square(
         self,
@@ -302,16 +432,7 @@ class ChessGUI:
         targets: Optional[dict[int, bool]] = None,
     ) -> None:
         """Desenha uma casa do tabuleiro com sua peça."""
-        # Calcula a posição visual (considerando flip)
-        if self._flip:
-            visual_file = 7 - file
-            visual_rank = rank
-        else:
-            visual_file = file
-            visual_rank = 7 - rank
-
-        x = self._margin + visual_file * self._square_size
-        y = self._margin + visual_rank * self._square_size
+        x, y = self._square_origin(file, rank)
 
         # Cor da casa
         is_light = (file + rank) % 2 == 0
@@ -437,6 +558,8 @@ class ChessGUI:
         bar_y = self._margin + self._board_size + self._margin
         bar_rect = pygame.Rect(0, bar_y, self._window_width, STATUS_BAR_HEIGHT)
         pygame.draw.rect(self._screen, STATUS_BG_COLOR, bar_rect)
+        # Guardado para o clique: a barra inteira abre o menu da partida.
+        self._status_rect = bar_rect
 
         # Linha separadora
         pygame.draw.line(
@@ -460,11 +583,12 @@ class ChessGUI:
         )
         self._screen.blit(turn_surface, (31, bar_y + 8))
 
-        # Número do movimento
-        move_num = board.fullmove_number
-        move_surface = self._font_status.render(
-            f"Movimento: {move_num}", True, COORD_COLOR
-        )
+        # Número do movimento e, ao lado, como chegar às ações da partida —
+        # sem essa dica o menu não teria como ser descoberto.
+        move_text = f"Movimento: {board.fullmove_number}"
+        if self._actions:
+            move_text += "   ·   Esc: opções"
+        move_surface = self._font_status.render(move_text, True, COORD_COLOR)
         self._screen.blit(move_surface, (10, bar_y + 32))
 
         # Mensagem (lado direito)
@@ -487,6 +611,100 @@ class ChessGUI:
                 midright=(self._window_width - 15, bar_y + STATUS_BAR_HEIGHT // 2)
             )
             self._screen.blit(msg_surface, msg_rect)
+
+    # -- Menu da partida (desenho) ------------------------------------------
+
+    MENU_ROW_HEIGHT = 42
+
+    def _draw_action_menu(self) -> None:
+        """Desenha o menu da partida por cima do tabuleiro."""
+        overlay = pygame.Surface(
+            (self._window_width, self._window_height), pygame.SRCALPHA
+        )
+        overlay.fill((0, 0, 0, 170))
+        self._screen.blit(overlay, (0, 0))
+
+        if self._confirm is not None:
+            self._draw_confirmation()
+            return
+
+        self._confirm_rects = []
+        width = min(self._window_width - 80, 420)
+        height = 64 + len(self._actions) * self.MENU_ROW_HEIGHT + 34
+        panel = pygame.Rect(0, 0, width, height)
+        panel.center = (self._window_width // 2, self._window_height // 2)
+        self._draw_panel(panel, "Opções da partida")
+
+        self._menu_rects = []
+        y = panel.y + 60
+        for index, (_, label, _) in enumerate(self._actions):
+            row = pygame.Rect(
+                panel.x + 12, y, panel.width - 24, self.MENU_ROW_HEIGHT - 6
+            )
+            self._menu_rects.append(row)
+
+            if index == self._menu_index:
+                pygame.draw.rect(self._screen, (70, 90, 70), row)
+                pygame.draw.rect(self._screen, LIGHT_SQUARE_COLOR, row, 1)
+
+            text = self._font_message.render(label, True, TEXT_COLOR)
+            self._screen.blit(text, (row.x + 14, row.y + 7))
+            y += self.MENU_ROW_HEIGHT
+
+        hint = self._font_coords.render(
+            "Setas escolhem · Enter confirma · Esc fecha", True, COORD_COLOR
+        )
+        self._screen.blit(
+            hint, (panel.centerx - hint.get_width() // 2, panel.bottom - 26)
+        )
+
+    def _draw_confirmation(self) -> None:
+        """Pergunta "tem certeza?" para uma ação sem volta."""
+        _, label, _ = self._confirm
+
+        width = min(self._window_width - 80, 420)
+        panel = pygame.Rect(0, 0, width, 190)
+        panel.center = (self._window_width // 2, self._window_height // 2)
+        self._draw_panel(panel, "Confirmar")
+
+        question = self._render_fitted(
+            f"{label}?", TEXT_COLOR, panel.width - 40
+        )
+        self._screen.blit(
+            question, (panel.centerx - question.get_width() // 2, panel.y + 66)
+        )
+
+        self._confirm_rects = []
+        button_width = (panel.width - 60) // 2
+        for offset, (text, confirmed, color) in enumerate((
+            ("Sim (S)", True, INVALID_MOVE_COLOR),
+            ("Não (N)", False, (100, 200, 100)),
+        )):
+            button = pygame.Rect(
+                panel.x + 20 + offset * (button_width + 20),
+                panel.bottom - 62, button_width, 42,
+            )
+            pygame.draw.rect(self._screen, STATUS_BG_COLOR, button)
+            pygame.draw.rect(self._screen, color, button, 2)
+            surface = self._font_message.render(text, True, color)
+            self._screen.blit(
+                surface,
+                (button.centerx - surface.get_width() // 2,
+                 button.centery - surface.get_height() // 2),
+            )
+            self._confirm_rects.append((button, confirmed))
+
+    def _draw_panel(self, panel: "pygame.Rect", title: str) -> None:
+        """Fundo, borda e título de um painel do menu."""
+        pygame.draw.rect(self._screen, BG_COLOR, panel)
+        pygame.draw.rect(self._screen, COORD_COLOR, panel, 2)
+
+        text = self._font_message.render(title, True, LIGHT_SQUARE_COLOR)
+        self._screen.blit(text, (panel.x + 20, panel.y + 18))
+        pygame.draw.line(
+            self._screen, COORD_COLOR,
+            (panel.x + 12, panel.y + 48), (panel.right - 12, panel.y + 48), 1,
+        )
 
     def _render_fitted(
         self,
@@ -528,21 +746,85 @@ class ChessGUI:
     def handle_events(self) -> bool:
         """Processa eventos do pygame.
 
+        As escolhas feitas no menu da partida não voltam por aqui: elas ficam
+        na fila de `take_action()`, para que quem trata uma desistência seja a
+        aplicação, e não o desenho da tela.
+
         Returns:
             False se o usuário fechou a janela, True caso contrário.
         """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return False
-                if event.key == pygame.K_f:
-                    # Toggle flip board
-                    self._flip = not self._flip
-                    self._needs_full_redraw = True
+
+            if self._confirm is not None:
+                self._handle_confirm_event(event)
+            elif self._menu_open:
+                self._handle_menu_event(event)
+            elif not self._handle_board_event(event):
+                return False
 
         return True
+
+    def _handle_board_event(self, event) -> bool:
+        """Eventos com o menu fechado.
+
+        Returns:
+            False se a janela deve ser fechada.
+        """
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                # Com ações disponíveis o Esc abre o menu; sem elas (durante
+                # uma espera) ele continua sendo a saída.
+                if not self._actions:
+                    return False
+                self.open_menu()
+            elif event.key == pygame.K_f:
+                self._flip = not self._flip
+                self._needs_full_redraw = True
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # A barra de status é o alvo grande de toque que abre o menu.
+            if self._status_rect and self._status_rect.collidepoint(event.pos):
+                self.open_menu()
+
+        return True
+
+    def _handle_menu_event(self, event) -> None:
+        """Navegação do menu da partida."""
+        if event.type == pygame.KEYDOWN:
+            count = len(self._actions)
+            if event.key in (pygame.K_ESCAPE, pygame.K_F1):
+                self._close_menu()
+            elif event.key in (pygame.K_UP, pygame.K_k) and count:
+                self._menu_index = (self._menu_index - 1) % count
+            elif event.key in (pygame.K_DOWN, pygame.K_j) and count:
+                self._menu_index = (self._menu_index + 1) % count
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                self._choose_action(self._menu_index)
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for index, rect in enumerate(self._menu_rects):
+                if rect.collidepoint(event.pos):
+                    self._choose_action(index)
+                    return
+            # Clique fora do painel fecha o menu, como em qualquer diálogo.
+            self._close_menu()
+
+    def _handle_confirm_event(self, event) -> None:
+        """Resposta ao "tem certeza?" de uma ação irreversível."""
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_y, pygame.K_s, pygame.K_RETURN,
+                             pygame.K_KP_ENTER):
+                self._resolve_confirmation(True)
+            elif event.key in (pygame.K_n, pygame.K_ESCAPE):
+                self._resolve_confirmation(False)
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for rect, confirmed in self._confirm_rects:
+                if rect.collidepoint(event.pos):
+                    self._resolve_confirmation(confirmed)
+                    return
 
     def show_promotion_dialog(self) -> chess.PieceType:
         """Exibe diálogo de seleção de peça para promoção.

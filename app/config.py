@@ -178,6 +178,7 @@ INVALID_MOVE_COLOR = (220, 50, 50)       # Vermelho (movimento inválido)
 SELECTED_SQUARE_COLOR = (110, 180, 90, 120)   # Casa da peça levantada
 MOVE_HINT_COLOR = (30, 85, 40, 150)           # Ponto: destino legal vazio
 CAPTURE_HINT_COLOR = (200, 60, 50, 170)       # Anel: destino legal com captura
+PENDING_SQUARE_COLOR = (250, 215, 110)        # Borda: destino digitado no teclado
 BG_COLOR = (49, 46, 43)                  # Fundo escuro
 STATUS_BG_COLOR = (39, 37, 34)           # Fundo da barra de status
 TEXT_COLOR = (255, 255, 255)             # Texto branco

@@ -749,6 +749,48 @@ class LichessClient:
             return
         yield from self._iter_ndjson(response)
 
+    def _post_game_action(
+        self,
+        path: str,
+        description: str,
+        game_id: Optional[str] = None,
+    ) -> bool:
+        """Chama um endpoint de ação da Board API sobre a partida atual.
+
+        Args:
+            path: Trecho depois de `/api/board/game/{id}/` (ex: "resign").
+            description: Como a ação aparece no log.
+            game_id: ID da partida (usa a atual se None).
+
+        Returns:
+            True se o servidor aceitou a ação.
+        """
+        gid = game_id or self._game_id
+        if not gid:
+            logger.error("Nenhuma partida ativa para %s.", description)
+            return False
+
+        try:
+            response = self._session.post(
+                f"{self._api_url}/api/board/game/{gid}/{path}",
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            logger.error("Erro ao %s: %s", description, exc)
+            return False
+
+        if response.ok:
+            logger.info("Ação aceita pelo Lichess: %s (%s).", description, gid)
+            return True
+
+        # O motivo costuma vir no corpo ("This game cannot be aborted"), e é
+        # ele que explica por que o botão não fez nada.
+        logger.warning(
+            "Lichess recusou %s — Status: %d, Resposta: %s",
+            description, response.status_code, response.text[:200],
+        )
+        return False
+
     def resign(self, game_id: Optional[str] = None) -> bool:
         """Desiste da partida.
 
@@ -758,19 +800,39 @@ class LichessClient:
         Returns:
             True se a resignação foi aceita.
         """
-        gid = game_id or self._game_id
-        if not gid:
-            return False
+        return self._post_game_action("resign", "desistir", game_id)
 
-        try:
-            response = self._session.post(
-                f"{self._api_url}/api/board/game/{gid}/resign",
-                timeout=REQUEST_TIMEOUT,
-            )
-            return response.ok
-        except requests.RequestException as exc:
-            logger.error("Erro ao desistir: %s", exc)
-            return False
+    def abort(self, game_id: Optional[str] = None) -> bool:
+        """Aborta a partida — só vale antes de os dois lados jogarem.
+
+        Abortar não conta derrota para ninguém; depois do primeiro lance de
+        cada jogador o Lichess recusa, e aí só resta desistir.
+
+        Args:
+            game_id: ID da partida (usa a atual se None).
+
+        Returns:
+            True se o servidor abortou a partida.
+        """
+        return self._post_game_action("abort", "abortar a partida", game_id)
+
+    def handle_draw(self, accept: bool = True, game_id: Optional[str] = None) -> bool:
+        """Oferece, aceita ou recusa empate.
+
+        O mesmo endpoint faz as três coisas: sem proposta na mesa, `yes` cria
+        uma; com uma proposta do oponente, `yes` aceita e `no` recusa.
+
+        Args:
+            accept: True para `yes` (oferecer/aceitar), False para `no`.
+            game_id: ID da partida (usa a atual se None).
+
+        Returns:
+            True se o servidor aceitou a requisição.
+        """
+        answer = "yes" if accept else "no"
+        return self._post_game_action(
+            f"draw/{answer}", f"responder empate ({answer})", game_id
+        )
 
     # -- encerramento -------------------------------------------------------
 

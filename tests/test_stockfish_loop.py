@@ -51,6 +51,11 @@ class FakeIPC:
         time.sleep(timeout)
         return None
 
+    def read_entry(self):
+        # Digitação do teclado matricial: só a camada de teclado do processo
+        # C emite, e este roteiro é de sensores.
+        return None
+
 
 class FakeEngine:
     def __init__(self, moves, think=0.0):

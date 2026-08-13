@@ -107,6 +107,49 @@ static void render_entry(const keypad_state *state, char *out, size_t size)
     snprintf(out, size, "%s%s", mode_prefix(state->mode), typed);
 }
 
+/* Conta à camada Python o que está sendo digitado agora.
+ *
+ * Sem isto, o teclado só apareceria na aplicação quando o lance ficasse
+ * pronto: o jogador digita quatro teclas às cegas e o monitor à frente dele
+ * não mostra nada. Com a origem já resolvida (duas teclas), o Python
+ * consegue ainda destacar para onde aquela peça pode ir.
+ *
+ * A linha vai pelo mesmo canal dos eventos, marcada com '@' — ver ipc.h.
+ */
+static void keypad_emit_entry(const keypad_state *state)
+{
+    char entry[LCD_COLUMNS * 2];
+    const char *origin = "";
+    const char *target = "";
+    int square;
+
+    /* Só um lance tem origem e destino; nos comandos (retirar, colocar) a
+     * casa digitada não é uma peça escolhida, e prever lances dali seria
+     * mentira. */
+    if (state->mode == ENTRY_MOVE) {
+        if (state->length >= 2 && (square = board_parse_square(state->text)) >= 0) {
+            origin = board_square_name(square);
+        }
+        if (state->length >= 4
+                && (square = board_parse_square(state->text + 2)) >= 0) {
+            target = board_square_name(square);
+        }
+    }
+
+    /* Entrada vazia no modo normal não tem o que mostrar: a barra de status
+     * da aplicação volta a dizer de quem é a vez. */
+    if (state->length > 0 || state->mode != ENTRY_MOVE) {
+        render_entry(state, entry, sizeof(entry));
+    } else {
+        entry[0] = '\0';
+    }
+
+    char line[160];
+    snprintf(line, sizeof(line), "@entry|%s|%s|%s|%s",
+             origin, target, entry, state->status);
+    ipc_emit_line(line);
+}
+
 static void keypad_refresh(const keypad_state *state)
 {
     char entry[LCD_COLUMNS * 2];
@@ -116,6 +159,8 @@ static void keypad_refresh(const keypad_state *state)
     lcd_line(1, entry);
 
     fprintf(stderr, "[teclado] %-16s | %s\n", state->status, entry);
+
+    keypad_emit_entry(state);
 }
 
 /* ------------------------------------------------------------------------ */

@@ -68,6 +68,16 @@ void ipc_emit_single(int square, int state)
     ipc_emit(&change, 1);
 }
 
+void ipc_emit_line(const char *line)
+{
+    if (g_out == NULL || line == NULL) {
+        return;
+    }
+
+    fprintf(g_out, "%s\n", line);
+    fflush(g_out);
+}
+
 void ipc_close(void)
 {
     if (g_out != NULL) {
