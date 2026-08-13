@@ -15,6 +15,12 @@ O sistema é dividido em duas camadas:
 
 A comunicação entre as camadas é feita via IPC (subprocess stdout/stdin, Named Pipe ou stdin).
 
+O processo C tem **duas camadas de entrada intercambiáveis**, escolhidas por
+linha de comando: a matriz de reed switches (`--input reed`) e um teclado
+matricial 4×4 em que os lances são digitados (`--input keypad`). As duas
+emitem os mesmos eventos, então a camada Python é a mesma nos dois casos —
+ver [Processo C](#processo-c--camadas-de-entrada).
+
 ### Módulos Python
 
 ```
@@ -33,6 +39,20 @@ app/
 mock/
 ├── hardware_mock.py     # Simulação do processo C para testes
 └── gui_mock.py          # GUI do mock: matriz 8×8 de botões (reed switches)
+```
+
+### Módulos C
+
+```
+src/
+├── main.c               # CLI: escolhe a camada de entrada
+├── reed_layer.c         # Camada 1: matriz 8×8 de reed switches + debouncing
+├── keypad_layer.c       # Camada 2: teclado matricial 4×4 (lances digitados)
+├── board.c              # Casas do tabuleiro e espelho de ocupação
+├── ipc.c                # Serialização dos eventos (stdout ou Named Pipe)
+├── lcd.c                # Display 16x2 por I2C (opcional, só com --lcd)
+├── gpio.c               # Wrapper da wiringPi (compila também sem ela)
+└── runstate.c           # Encerramento limpo em SIGINT/SIGTERM
 ```
 
 ```
@@ -389,6 +409,177 @@ sensores ativos. O tamanho do tabuleiro é ajustável por
 | `reset` | Volta ao estado inicial |
 | `help` | Lista os comandos |
 | `quit` | Encerrar |
+
+## Processo C — camadas de entrada
+
+O processo C é o que fala com o hardware. Ele tem duas camadas de entrada, e
+**as duas emitem exatamente os mesmos eventos IPC** (`e2:0,e4:1`) — a camada
+Python não sabe qual delas está do outro lado, o que permite trocar de uma
+para a outra sem mexer em nada do jogo.
+
+| Camada | Opção | Como o lance chega |
+|--------|-------|--------------------|
+| Reed switches | `--input reed` | O jogador move a peça no tabuleiro físico |
+| Teclado matricial | `--input keypad` | O jogador digita o lance no teclado 4×4 |
+
+A camada de teclado é o **plano B**: se a matriz de reed switches não ficar
+pronta, o jogo inteiro (Stockfish, Lichess, GUI, roque, capturas) continua
+funcionando com um teclado de R$ 10 no lugar do tabuleiro instrumentado.
+
+### Compilar
+
+```bash
+make board-input
+```
+
+A `wiringPi` é detectada automaticamente. Sem ela o binário compila do mesmo
+jeito — o que permite testar o teclado com `make keypad-stdin` em qualquer
+máquina — mas as camadas que tocam o GPIO recusam a rodar.
+
+### Jogar com o processo C
+
+```bash
+# Contra o Stockfish, lendo a matriz de reed switches
+make stockfish-hw
+
+# Contra o Stockfish, digitando os lances no teclado 4×4
+make keypad
+
+# Online, contra a IA do Lichess (INPUT_LAYER escolhe a camada)
+make lichess-ai-hw INPUT_LAYER=keypad
+```
+
+Por baixo, os alvos apenas apontam a aplicação para o binário em vez do mock:
+
+```bash
+CHESS_C_PROCESS=./build/board_input \
+CHESS_C_PROCESS_ARGS='--input keypad' \
+python -m app.main --mode stockfish
+```
+
+### Teclado 4×4 — como digitar um lance
+
+```
+1  2  3  A          Colunas do tabuleiro:  A → a     AA → e
+4  5  6  B                                 B → b     BB → f
+7  8  9  C                                 C → c     CC → g
+*  0  #  D                                 D → d     DD → h
+```
+
+O teclado só tem A-D e o tabuleiro precisa de a-h: **a tecla repetida vale
+pela letra seguinte do bloco**. Não há tempo de espera envolvido — o lance
+alterna coluna e fileira, então duas letras seguidas só podem ser a mesma
+casa sendo redigitada. Um terceiro toque volta para a letra simples
+(`A → a → e → a`), o que permite corrigir sem apagar.
+
+| Lance | Teclas |
+|-------|--------|
+| `a2a4` | `A` `2` `A` `4` `#` |
+| `e2e4` | `AA` `2` `AA` `4` `#` |
+| `g1f3` | `CC` `1` `BB` `3` `#` |
+| Roque curto (brancas) | `AA` `1` `CC` `1` `#`, depois `DD` `1` `BB` `1` `#` |
+
+| Tecla | Ação |
+|-------|------|
+| `#` | Confirma e envia o lance |
+| `*` | Apaga a última tecla |
+
+O roque é digitado em dois lances (rei e depois torre), igual ao que se faz
+no tabuleiro físico. A promoção vira dama automaticamente, como na camada de
+reed switches.
+
+#### Comandos
+
+O prefixo `0` (só com a entrada vazia) abre os comandos que correspondem a
+mexer numa peça sem fazer um lance:
+
+| Comando | Efeito | Quando usar |
+|---------|--------|-------------|
+| `0` `1` *casa* `#` | Retira a peça da casa | A aplicação pediu "remova a peça de e5" (o oponente capturou) |
+| `0` `2` *casa* `#` | Coloca uma peça na casa | A aplicação pediu "coloque uma peça em e5" |
+| `0` `9` `#` | Reenvia o estado das 64 casas | O tabuleiro virtual e o espelho do teclado divergiram |
+| `0` `0` `#` | Volta o espelho à posição inicial e o reenvia | Recomeçar do zero |
+
+> [!NOTE]
+> O processo C mantém um espelho de onde estão as peças **do jogador** e
+> recusa na origem o que o tabuleiro físico também recusaria: mover de uma
+> casa vazia ou para uma casa que já tem peça sua. A legalidade do lance
+> continua sendo decidida pelo Python — um lance ilegal é recusado lá e a
+> aplicação pede para desfazê-lo, o que no teclado é digitar o lance ao
+> contrário.
+
+### Testar sem hardware
+
+```bash
+# Teclas pelo terminal; os eventos IPC saem em stdout
+make keypad-stdin
+```
+
+Digitando `AA2AA4#` a saída é `e2:0,e4:1` — exatamente o que a matriz de reed
+switches emitiria para o mesmo lance.
+
+### Opções do processo C
+
+```
+--input reed|keypad   Camada de entrada (padrão: reed)
+--color white|black   Cor das peças do jogador (posição inicial do espelho)
+--output CAMINHO      Escreve num Named Pipe em vez de stdout (modo IPC 'pipe')
+--poll-ms N           Intervalo entre varreduras
+--debounce N          Leituras estáveis exigidas por mudança
+--active-low          Inverte a polaridade da matriz escolhida
+--reed-flip           Gira o mapeamento 180° (a1 no canto oposto)
+--no-initial          Reed: não envia o estado completo na primeira leitura
+--keys gpio|stdin     Teclado: origem das teclas (stdin dispensa hardware)
+--auto-enter          Teclado: envia o lance na quarta tecla, sem '#'
+--raw                 Teclado: conferência de bancada (ver abaixo)
+--lcd                 Teclado: usa um display 16x2 no I2C (desligado por padrão)
+--i2c-bus / --lcd-addr   Barramento e endereço do display
+```
+
+O que está sendo digitado é ecoado em stderr (`[teclado] Digitando... | Lance:
+E2_`), que aparece no terminal de onde a aplicação foi iniciada. Quem tiver um
+display 16x2 no I2C pode passar `--lcd` para ver a mesma coisa nele.
+
+> [!NOTE]
+> O `--lcd` fica desligado por padrão de propósito. Um `open()` do barramento
+> e o `ioctl(I2C_SLAVE)` funcionam mesmo sem display ligado — o ioctl só
+> registra o endereço, não confere quem está lá —, então a ausência do display
+> só aparece na primeira escrita. Quando isso acontece, o processo imprime uma
+> mensagem, desliga o display e segue com o eco em stderr.
+
+Pinos padrão (numeração BCM): a matriz de reed usa linhas `4,5,6,12,13,16,19,20`
+e colunas `21,22,23,24,25,26,27,17`; o teclado usa linhas `16,20,21,26` e
+colunas `19,13,6,5` — a fiação já montada na bancada (a mesma do experimento 6).
+Para mudar, edite `keypad_config_default()` em [src/keypad_layer.c](src/keypad_layer.c).
+
+### Conferir a fiação do teclado
+
+Antes de jogar, vale confirmar que cada tecla chega onde se espera:
+
+```bash
+./build/board_input --input keypad --raw
+```
+
+Cada tecla pressionada imprime em que interseção da matriz ela foi lida:
+
+```
+[bancada] tecla 'A'  (linha 0 = pino 16, coluna 3 = pino 19)
+```
+
+Nenhum evento é enviado nesse modo. O que conferir:
+
+| Sintoma | Causa provável |
+|---------|----------------|
+| Nenhuma tecla aparece | Polaridade invertida — tente `--active-low` |
+| A tecla sai trocada por outra da mesma coluna | Ordem dos pinos de linha |
+| A tecla sai trocada por outra da mesma linha | Ordem dos pinos de coluna |
+| Linhas e colunas trocadas entre si | `row_pins` e `column_pins` invertidos |
+
+Confira também a **serigrafia**: o código assume o teclado 4×4 padrão, com
+`A B C D` na quarta coluna e `* 0 # D` na última linha. O experimento 6 usava
+as mesmas teclas com rótulos de calculadora (`+ - * /` e `! 0 = /`) — se o
+teclado da bancada for esse, a tecla `A` é a marcada `+`, a `B` é a `-`, o
+`#` (confirmar) é o `=` e o `*` (apagar) é o `!`.
 
 ## Destaques no tabuleiro
 

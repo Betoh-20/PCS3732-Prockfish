@@ -56,6 +56,11 @@
               # Makefile: atalhos para os modos de execução.
               pkgs.gnumake
 
+              # make board-input: compila o processo C (camadas de entrada).
+              # A wiringPi só existe no Raspberry Pi; sem ela o binário
+              # compila mesmo assim e vale para testar com --keys stdin.
+              pkgs.gcc
+
               # make pdf: geração do relatório em PDF.
               pkgs.pandoc
               texlive

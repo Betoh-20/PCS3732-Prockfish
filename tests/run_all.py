@@ -15,6 +15,8 @@ TESTS = [
     ("Modo Lichess (cliente + aplicação)", "test_lichess.py"),
     ("Desafios diretos e recebidos", "test_challenge.py"),
     ("Loop principal (modo Stockfish)", "test_stockfish_loop.py"),
+    # Roda o binário do processo C; pula sozinha se ele não foi compilado.
+    ("Camada de teclado (processo C)", "test_keypad_layer.py"),
 ]
 
 here = Path(__file__).resolve().parent

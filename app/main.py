@@ -30,7 +30,7 @@ from app.config import (
     GameMode, PlayerColor,
     IPC_MODE, STOCKFISH_PATH, STOCKFISH_TIME_LIMIT,
     LICHESS_TOKEN, LICHESS_TOKEN_ORIGIN, LICHESS_TIME_MINUTES, LICHESS_INCREMENT,
-    C_PROCESS_PATH, MOCK_PROCESS_PATH,
+    C_PROCESS_PATH, C_PROCESS_ARGS, MOCK_PROCESS_PATH,
     DEFAULT_TOKEN_FILES, read_token_file,
 )
 from app.ipc_reader import IPCReader
@@ -238,12 +238,17 @@ class ChessApplication:
     def _hardware_process_args(self) -> list[str]:
         """Argumentos do subprocesso de hardware.
 
-        Só são passados para o mock — o processo C de verdade não conhece
-        esses parâmetros. Sem eles, o mock sempre nasceria com as peças nas
-        fileiras 1 e 2, o que quebraria qualquer partida jogada de pretas.
+        A cor é o único parâmetro que os dois lados entendem, e os dois
+        precisam dela: sem ela, tanto o mock quanto a camada de teclado do
+        processo C nasceriam com as peças nas fileiras 1 e 2, o que quebraria
+        qualquer partida jogada de pretas.
+
+        O `--flip` é só do mock (orientação da janela dele). Ao processo C vai
+        também o que estiver em $CHESS_C_PROCESS_ARGS, que é onde se escolhe a
+        camada de entrada (`--input reed` ou `--input keypad`).
         """
         if C_PROCESS_PATH != MOCK_PROCESS_PATH:
-            return []
+            return ["--color", self.player_color.value, *C_PROCESS_ARGS]
         args = ["--color", self.player_color.value]
         if self.player_color == PlayerColor.BLACK:
             args.append("--flip")
