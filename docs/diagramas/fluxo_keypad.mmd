@@ -1,0 +1,31 @@
+graph TB
+    V(["Entrada vazia"]) -->|"tecla A–D"| C["Coluna de origem<br/>toque repetido: A → a → e → a"]
+    C -->|"tecla 1–8"| O["Origem completa<br/>ex: e2"]
+    O -->|"tecla A–D"| CD["Coluna de destino<br/>mesmo toque repetido"]
+    CD -->|"tecla 1–8"| D["Destino completo<br/>ex: e4"]
+    D -->|"tecla #"| VAL{"Espelho local aceita?"}
+
+    VAL -->|"sim"| EV["Emite o evento<br/>e2:0,e4:1"]
+    VAL -->|"não — origem vazia,<br/>destino ocupado ou<br/>origem = destino"| REC["Recusa na origem<br/>mantém o digitado"]
+    EV --> V
+    REC --> D
+
+    V -->|"tecla 0"| CMD{"Comando"}
+    CMD -->|"1 retirar / 2 colocar"| ALVO["Casa do comando"]
+    ALVO -->|"tecla #"| EV
+    CMD -->|"9 reenviar estado"| FULL["Emite as 64 casas"]
+    CMD -->|"0 posição inicial"| FULL
+    FULL --> V
+
+    APAGA["tecla * — apaga a última tecla<br/>e volta um passo"] -.-> C
+    ENTRY["Toda tecla emite<br/>@entry|origem|destino|texto|status<br/>para a GUI e o LCD"] -.-> O
+
+    classDef entrada fill:#e8f4fd,stroke:#0f3460,stroke-width:2px;
+    classDef decisao fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef saida fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef nota fill:#fffde7,stroke:#c0a000,stroke-dasharray: 4 3;
+
+    class C,O,CD,D,ALVO entrada;
+    class VAL,CMD decisao;
+    class EV,FULL,REC saida;
+    class APAGA,ENTRY nota;

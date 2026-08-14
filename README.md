@@ -193,6 +193,9 @@ make
 | `make deps` | `pip install -r requirements.txt` |
 | `make shell` | Abre o devShell do Nix (`make shell-classic` para `nix-shell`) |
 | `make clean` | Remove `__pycache__` e caches de ferramentas |
+| `make diagramas` | Renderiza `docs/diagramas/*.mmd` em `.png` (requer `mmdc`) |
+| `make pdf` | Gera `docs/Relatorio-1.pdf` a partir do Markdown (pandoc + xelatex) |
+| `make pdf3` | Gera `docs/Relatorio-3.pdf` a partir do LaTeX (xelatex) |
 
 Os alvos do Lichess verificam antes se há um token acessível e falham com a
 instrução de como criá-lo — em vez de abrir a janela e só então tomar um 401.
@@ -693,10 +696,10 @@ Nenhum evento é enviado nesse modo. O que conferir:
 | Linhas e colunas trocadas entre si | `row_pins` e `column_pins` invertidos |
 
 Confira também a **serigrafia**: o código assume o teclado 4×4 padrão, com
-`A B C D` na quarta coluna e `* 0 # D` na última linha. O experimento 6 usava
-as mesmas teclas com rótulos de calculadora (`+ - * /` e `! 0 = /`) — se o
-teclado da bancada for esse, a tecla `A` é a marcada `+`, a `B` é a `-`, o
-`#` (confirmar) é o `=` e o `*` (apagar) é o `!`.
+`A B C D` na quarta coluna e `* 0 # D` na última linha — que é o teclado da
+bancada. Num teclado com outros rótulos, o que vale é a posição da tecla na
+matriz, não o que está impresso nela: a tecla da linha 0, coluna 3 é o `A`
+para o programa, seja qual for a serigrafia.
 
 ## Destaques no tabuleiro
 

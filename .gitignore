@@ -48,3 +48,13 @@ result-*
 docs/*.pdf
 mermaid-filter.err
 .mermaid-config.json
+
+# O relatório entregue é a exceção: vai versionado junto do fonte .tex,
+# porque é o que se anexa à release e se envia no Moodle.
+!docs/Relatorio-3.pdf
+
+# Auxiliares do LaTeX (make pdf3 já os apaga; isto cobre compilações à mão)
+docs/*.aux
+docs/*.toc
+docs/*.out
+docs/*.synctex.gz

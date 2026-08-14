@@ -34,8 +34,8 @@
             fontDirectories = [ pkgs.dejavu_fonts pkgs.freefont_ttf pkgs.liberation_ttf ];
           };
 
-          # make pdf: pandoc + xelatex + mermaid-filter.
-          # Monta um texlive mínimo com xetex e as fontes que o relatório usa.
+          # make pdf / make pdf3: pandoc + xelatex + mermaid-filter.
+          # Monta um texlive mínimo com xetex e as fontes que os relatórios usam.
           texlive = pkgs.texlive.combine {
             inherit (pkgs.texlive)
               scheme-small          # base LaTeX
@@ -44,7 +44,10 @@
               collection-langenglish
               collection-langportuguese
               adjustbox             # docs/header.tex: redimensiona imagens do mermaid
-              collectbox;           # dependência do adjustbox
+              collectbox            # dependência do adjustbox
+              # docs/Relatorio-3.tex (LaTeX direto, sem pandoc):
+              polyglossia           # hifenização e datas em pt-BR no xelatex
+              enumitem;             # espaçamento das listas
           };
 
           prockfish = pkgs.mkShell {

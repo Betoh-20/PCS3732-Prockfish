@@ -1,0 +1,586 @@
+% ---------------------------------------------------------------------------
+%  Relatório da Semana 3 — Tabuleiro de Xadrez Eletrônico
+%
+%  Compilar:  make pdf3        (usa xelatex, dentro do devShell do flake)
+%  ou:        xelatex -output-directory=docs docs/Relatorio-3.tex   (2 passadas)
+%
+%  As figuras vêm de docs/diagramas/*.png, geradas dos .mmd por `mmdc`
+%  (alvo `make diagramas`).
+% ---------------------------------------------------------------------------
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{portuguese}
+
+\setmainfont{DejaVu Sans}
+\setmonofont{DejaVu Sans Mono}[Scale=0.85]
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+% Vale tanto para `xelatex docs/Relatorio-3.tex` da raiz (o que `make pdf3`
+% faz, por causa do -output-directory) quanto de dentro de docs/.
+\graphicspath{{docs/diagramas/}{diagramas/}}
+\usepackage{float}
+\usepackage{amssymb}       % \checkmark nas tabelas de rastreabilidade
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{fancyvrb}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\floatplacement{figure}{H}
+\setlist{itemsep=2pt, parsep=0pt, topsep=4pt}
+
+% Colunas de largura fixa sem justificação: as células das tabelas são curtas
+% e a justificação nelas só produz hifenização feia e espaços largos.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% Blocos de saída de terminal / protocolo.
+\definecolor{codebg}{HTML}{F4F4F6}
+\DefineVerbatimEnvironment{terminal}{Verbatim}{%
+  fontsize=\footnotesize, frame=leftline, framerule=1pt,
+  rulecolor=\color{gray}, framesep=8pt, xleftmargin=6pt}
+
+\newcommand{\diagrama}[3]{%
+  \begin{figure}[H]
+    \centering
+    \includegraphics[width=#2\textwidth]{#1}
+    \caption{#3}
+    \label{fig:#1}
+  \end{figure}}
+
+\title{Tabuleiro de Xadrez Eletrônico com Integração a \emph{Chess Engine}\\[6pt]
+       \large Relatório da Semana 3}
+\author{Grupo W\\ PCS3732 --- Laboratório de Processadores}
+\date{Agosto de 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent
+A terceira semana do projeto foi dedicada à camada de baixo nível e à interface
+com o usuário. O processo em C foi reescrito de forma modular e ganhou uma
+segunda camada de entrada --- um teclado matricial 4$\times$4 em que os lances
+são digitados ---, intercambiável com a matriz de \emph{reed switches} e
+falando exatamente o mesmo protocolo IPC com a aplicação Python. Esse é o
+\textbf{plano B} do projeto: a montagem do tabuleiro instrumentado avançou, mas
+não deve ficar pronta no prazo, e com o teclado o sistema inteiro (Stockfish,
+Lichess, GUI, roque, capturas) continua jogável. Em paralelo, as escolhas que
+antes só existiam na linha de comando passaram a ter interface gráfica, e a
+suíte automatizada ganhou 30 verificações novas que exercitam o binário em C de
+ponta a ponta.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ===========================================================================
+\section{Desenvolvimento de Software}
+% ===========================================================================
+
+\subsection{Reestruturação do processo em C}
+
+Na semana 2 o código de baixo nível era uma adaptação direta da prova de
+conceito feita para Arduino: um único arquivo que inicializava a
+\texttt{wiringPi}, varria a matriz e imprimia as mudanças. Nesta semana ele foi
+reescrito como um programa modular, com responsabilidades separadas em
+arquivos próprios e uma interface de linha de comando (Tabela~\ref{tab:modulos}).
+
+\begin{table}[H]
+\centering
+\caption{Módulos do processo em C (\texttt{src/}).}
+\label{tab:modulos}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Arquivo} & \textbf{Responsabilidade} \\
+\midrule
+\texttt{main.c}         & CLI: escolhe a camada de entrada e liga-a ao canal IPC \\
+\texttt{reed\_layer.c}  & Camada 1: varredura da matriz 8$\times$8 e \emph{debouncing} \\
+\texttt{keypad\_layer.c}& Camada 2: teclado matricial 4$\times$4, lances digitados \\
+\texttt{board.c}        & Casas do tabuleiro e espelho de ocupação \\
+\texttt{ipc.c}          & Serialização dos eventos (\emph{stdout} ou \emph{Named Pipe}) \\
+\texttt{lcd.c}          & Display 16$\times$2 por I\textsuperscript{2}C (opcional) \\
+\texttt{gpio.c}         & \emph{Wrapper} da \texttt{wiringPi} (compila também sem ela) \\
+\texttt{runstate.c}     & Encerramento limpo em \texttt{SIGINT}/\texttt{SIGTERM} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A decisão de projeto que organiza tudo isso é a de \textbf{camadas de entrada
+intercambiáveis}: as duas camadas emitem exatamente os mesmos eventos, então a
+aplicação Python não sabe --- nem precisa saber --- qual delas está do outro
+lado. Trocar de uma para a outra é trocar uma opção de linha de comando
+(\texttt{-{}-input reed} ou \texttt{-{}-input keypad}), sem tocar em nada da
+lógica de jogo.
+
+\diagrama{arq_c.png}{0.70}{Arquitetura do processo em C. As duas camadas de
+entrada convergem para o mesmo módulo de IPC, o que as torna intercambiáveis do
+ponto de vista da aplicação Python.}
+
+Outro ponto de projeto é a detecção da \texttt{wiringPi} em tempo de
+compilação. A biblioteca só existe no Raspberry Pi; sem ela o binário compila
+do mesmo jeito (as funções de GPIO viram \emph{stubs} que recusam a execução),
+o que permite exercitar o \emph{parser} do teclado em qualquer máquina --- e é
+exatamente disso que a suíte de testes da Seção~\ref{sec:testes} se aproveita.
+
+\subsection{Plano B: camada de teclado matricial}
+
+O risco identificado na semana 2 --- a chapa de acrílico comprada era grande
+demais para o alcance dos ímãs, e a remontagem do tabuleiro consome tempo ---
+motivou uma alternativa de contingência: em vez de mover a peça no tabuleiro
+instrumentado, o jogador \textbf{digita o lance} num teclado matricial 4$\times$4
+de baixo custo. Todo o resto do sistema permanece igual.
+
+\paragraph{Impacto nos requisitos.} O plano B não é neutro do ponto de vista da
+especificação, e vale declará-lo: com o teclado, \textbf{RF1} (``detecção das
+peças no tabuleiro físico e de seus movimentos'') deixa de ser satisfeito ---
+o lance é informado, não detectado --- e \textbf{RNF3} (robustez contra falsos
+positivos por esbarrões) perde o objeto, já que não há sensor a ser
+perturbado. \textbf{RF2}, \textbf{RF3} e \textbf{RNF2} continuam valendo
+integralmente, e são exatamente eles que o teclado preserva. A camada de
+\emph{reed switches} continua implementada e é o caminho principal: o teclado é
+contingência para o caso de a montagem não fechar, não uma troca de escopo. A
+Seção~\ref{sec:rastreabilidade} registra esse estado requisito a requisito.
+
+O obstáculo é que o teclado tem apenas as letras \texttt{A}--\texttt{D} e o
+tabuleiro precisa de \texttt{a}--\texttt{h}. A solução adotada é o
+\textbf{toque repetido}: a mesma tecla pressionada duas vezes seguidas vale
+pela letra do bloco seguinte (\texttt{A}$\to$\texttt{a}, \texttt{AA}$\to$\texttt{e}),
+e um terceiro toque volta ao início, o que permite corrigir sem apagar. Não há
+temporizador envolvido --- como o lance alterna coluna e fileira, duas letras
+seguidas só podem ser a mesma casa sendo redigitada, o que torna a
+desambiguação determinística.
+
+\begin{table}[H]
+\centering
+\caption{Exemplos de digitação de lances.}
+\label{tab:teclas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Lance} & \textbf{Teclas} & \textbf{Evento emitido} \\
+\midrule
+\texttt{a2a4} & \texttt{A 2 A 4 \#}       & \texttt{a2:0,a4:1} \\
+\texttt{e2e4} & \texttt{AA 2 AA 4 \#}     & \texttt{e2:0,e4:1} \\
+\texttt{g1f3} & \texttt{CC 1 BB 3 \#}     & \texttt{g1:0,f3:1} \\
+Roque curto   & \texttt{AA 1 CC 1 \#} e depois \texttt{DD 1 BB 1 \#} & \texttt{e1:0,g1:1} e \texttt{h1:0,f1:1} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A tecla \texttt{\#} confirma o lance e a \texttt{*} apaga a última tecla. O
+roque é digitado em dois lances (rei e depois torre), exatamente como já
+acontece no tabuleiro físico, o que reaproveita sem alteração o tratamento de
+roque em duas etapas já existente no Python.
+
+\diagrama{fluxo_keypad.png}{0.92}{Fluxo de digitação de um lance na camada de
+teclado, incluindo os comandos e a recusa local.}
+
+O processo em C mantém um \textbf{espelho} de onde estão as peças do jogador e
+recusa na origem o que o tabuleiro físico também recusaria: mover a partir de
+uma casa vazia, mover para uma casa já ocupada por peça própria, ou origem
+igual ao destino. A legalidade do lance continua sendo decidida pelo Python
+--- essa validação local só evita gerar eventos que o tabuleiro real jamais
+produziria. Como o espelho pode divergir do tabuleiro virtual (por exemplo,
+quando o oponente captura uma peça), há um conjunto de comandos com prefixo
+\texttt{0}:
+
+\begin{table}[H]
+\centering
+\caption{Comandos do teclado (equivalentes a mexer numa peça sem fazer um lance).}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Comando} & \textbf{Efeito} & \textbf{Quando usar} \\
+\midrule
+\texttt{0 1} \emph{casa} \texttt{\#} & Retira a peça da casa & O oponente capturou uma peça \\
+\texttt{0 2} \emph{casa} \texttt{\#} & Coloca uma peça na casa & A aplicação pediu para repor uma peça \\
+\texttt{0 9 \#} & Reenvia o estado das 64 casas & Espelho e tabuleiro virtual divergiram \\
+\texttt{0 0 \#} & Volta o espelho à posição inicial & Recomeçar do zero \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Extensão do protocolo IPC: linhas \texttt{@entry}}
+
+Na camada de \emph{reed switches}, a peça na mão do jogador é visível pelos
+próprios sensores, e a GUI usa essa informação para destacar os destinos
+legais. Digitando o lance não há sensor nenhum --- e sem alguma informação
+adicional o jogador digitaria às cegas até o \texttt{\#}.
+
+A solução foi estender o protocolo IPC com um segundo tipo de linha, que
+começa com \texttt{@} --- caractere que nenhuma casa do tabuleiro pode ter, de
+modo que qualquer leitor que só entenda \texttt{casa:estado} as ignora sem
+tropeçar:
+
+\begin{terminal}
+@entry|origem|destino|texto|status
+\end{terminal}
+
+\noindent
+Digitando \texttt{AA2AA4\#} (lance \texttt{e2e4}), a sequência emitida é:
+
+\begin{terminal}
+@entry|||Lance: A_|Digitando...
+@entry|||Lance: E_|Coluna trocada
+@entry|e2||Lance: E2_|Digitando...
+@entry|e2||Lance: E2A_|Digitando...
+@entry|e2||Lance: E2E_|Coluna trocada
+@entry|e2|e4|Lance: E2E4|Digitando...
+e2:0,e4:1
+@entry||||Enviado e2e4
+\end{terminal}
+
+Com isso a GUI passa a destacar a casa de origem e os destinos legais da peça
+escolhida assim que as duas primeiras teclas formam uma casa, e a barra de
+status mostra o que já foi digitado. O destino digitado, ainda não confirmado,
+ganha uma borda âmbar. Só peças do próprio jogador são destacadas: apontar uma
+casa vazia ou uma peça do oponente é erro de digitação, e destacá-la sugeriria
+um lance inexistente.
+
+\subsection{Interface de configuração}
+\label{sec:menu}
+
+Na revisão por pares da semana 2, o Grupo I sugeriu substituir a configuração
+por CLI por uma interface visual interativa, e o Grupo B pediu melhor
+sinalização de erros ao usuário. Ambas as sugestões foram atendidas nesta
+semana.
+
+Tudo o que os alvos do \texttt{Makefile} escolhem por variáveis --- modo de
+jogo, oponente, cor das peças, camada de entrada, tempo da \emph{engine},
+controle de tempo do Lichess --- passou a ser escolhido também na própria
+interface, descrito num único módulo (\texttt{app/launcher.py}) e renderizado
+de duas formas: uma janela \emph{pygame} operada por teclado ou mouse, e uma
+lista numerada no terminal para quando não há \emph{display} (acesso por SSH).
+Executar \texttt{python -m app.main} sem argumento nenhum abre o menu.
+
+\begin{terminal}
+Tabuleiro de Xadrez Eletrônico
+Stockfish (1s por lance) - peças brancas - entrada: mock (gui)
+--------------------------------------------------------------
+  Modo de jogo                          Stockfish local
+  Tempo por lance (s)              <       1.0       >
+  Cor das peças físicas                          brancas
+  Entrada do tabuleiro               mock (sem hardware)
+  ...
+  INICIAR PARTIDA
+  Compilar processo C (make board-input)
+  Sair
+--------------------------------------------------------------
+Equivalente no terminal: make stockfish COLOR=white
+Setas: escolher/alterar - Enter: editar ou iniciar - F5: compilar
+\end{terminal}
+
+Quanto à sinalização de erros, o menu \textbf{verifica as pré-condições antes
+de começar} e impede a partida enquanto houver impedimento: token do Lichess
+ausente, controle de tempo que a \emph{Board API} recusa, processo em C ainda
+não compilado, Stockfish fora do \texttt{PATH}. Cada um vira uma mensagem
+explicativa no rodapé, em vez de um erro no meio da partida. O menu também
+compila o processo em C sem sair da interface e exibe o comando equivalente
+(\texttt{make ...}), de modo que a CLI continua disponível para quem
+desenvolve.
+
+\subsection{Ações durante a partida}
+
+Com a partida em andamento, a tecla \texttt{Esc} passou a abrir um menu de
+ações sobre o tabuleiro: reiniciar (modo Stockfish), abortar, oferecer ou
+aceitar empate, desistir, voltar ao menu de configuração ou sair. Antes, uma
+proposta de empate do oponente só podia ser respondida pelo site do Lichess.
+
+Duas decisões de interface merecem registro. Primeiro, enquanto a partida está
+viva toda ação irreversível pede confirmação --- num tabuleiro operado por
+toque, um encostão não pode custar a partida. Segundo, ao fim da partida o
+menu abre sozinho e sem confirmação, já com as opções que ainda fazem sentido,
+e ``Voltar ao menu'' devolve o jogador à configuração sem reabrir o programa.
+
+% ===========================================================================
+\section{Desenvolvimento de Hardware}
+% ===========================================================================
+
+A montagem do tabuleiro instrumentado avançou: cerca de \textbf{duas fileiras
+completas} de casas foram montadas com \emph{reed switches} e diodos, o
+suficiente para confirmar em escala real o mapeamento de linhas e colunas e a
+detecção através da chapa. Ainda assim, a avaliação do grupo é que
+\textbf{não haverá tempo de concluir as 64 casas} dentro do cronograma da
+disciplina --- o que confirma o risco levantado na semana 2 e justifica o plano
+B descrito acima.
+
+Do lado do teclado matricial, a implementação foi \textbf{testada com o
+hardware de verdade}, reaproveitando a fiação já montada na bancada (a mesma do
+experimento 6): linhas nos pinos BCM \texttt{16, 20, 21, 26} e colunas em
+\texttt{19, 13, 6, 5}. Para essa verificação o processo em C ganhou um modo de
+conferência de bancada:
+
+\begin{terminal}
+$ ./build/board_input --input keypad --raw
+[bancada] tecla 'A'  (linha 0 = pino 16, coluna 3 = pino 19)
+\end{terminal}
+
+\noindent
+Nesse modo nenhum evento é enviado --- ele só mostra em que interseção da
+matriz cada tecla foi lida, o que separa um problema de fiação de um problema
+de lógica. A conferência confirmou que o teclado da bancada é o 4$\times$4
+padrão --- \texttt{A B C D} na quarta coluna, \texttt{* 0 \# D} na última
+linha ---, que é exatamente o mapeamento assumido em
+\texttt{keypad\_config\_default()}: nenhuma tradução de rótulos foi
+necessária.
+
+A matriz de \emph{reed switches} usa pinos distintos (linhas
+\texttt{4, 5, 6, 12, 13, 16, 19, 20}, colunas \texttt{21, 22, 23, 24, 25, 26,
+27, 17}), de modo que as duas camadas podem coexistir fisicamente no mesmo
+Raspberry Pi.
+
+% ===========================================================================
+\section{Evidências de Testes Experimentais}
+\label{sec:testes}
+% ===========================================================================
+
+\subsection{Suíte automatizada}
+
+A suíte de testes ganhou uma quarta \emph{suite},
+\texttt{tests/test\_keypad\_layer.py}, com \textbf{30 verificações}. Ela não é
+um teste de unidade do Python: ela executa o binário em C de verdade
+(\texttt{build/board\_input --input keypad --keys stdin}), digita as teclas na
+entrada padrão e confere os eventos que saem --- ou seja, exercita o mesmo
+caminho de código do teclado real, trocando apenas a origem das teclas. Além
+disso, as linhas \texttt{@entry} são conferidas com o \emph{parser} que a
+própria aplicação usa (\texttt{app.ipc\_reader.parse\_entry}), o que valida os
+dois lados do protocolo. A suíte é pulada, sem falhar, quando o binário não
+foi compilado.
+
+Resultado da execução completa (\texttt{make test}):
+
+\begin{terminal}
+======================================================================
+Todas as 4 suítes passaram.
+\end{terminal}
+
+\subsection{Verificações da camada de teclado}
+
+A Tabela~\ref{tab:evidencias} reproduz as verificações executadas, agrupadas
+por objetivo. Todas passaram.
+
+\begin{longtable}{@{}L{0.32\textwidth}L{0.28\textwidth}L{0.32\textwidth}@{}}
+\caption{Evidências da camada de teclado (\texttt{tests/test\_keypad\_layer.py}).}
+\label{tab:evidencias}\\
+\toprule
+\textbf{Verificação} & \textbf{Teclas} & \textbf{Saída observada} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Verificação} & \textbf{Teclas} & \textbf{Saída observada} \\
+\midrule
+\endhead
+\multicolumn{3}{@{}l}{\textit{Colunas: tecla simples e tecla repetida}} \\[2pt]
+\texttt{a2a4} com teclas simples & \texttt{A2A4\#} & \texttt{a2:0,a4:1} \\
+\texttt{e2e4} com tecla repetida & \texttt{AA2AA4\#} & \texttt{e2:0,e4:1} \\
+\texttt{b1c3} (cavalo) & \texttt{B1C3\#} & \texttt{b1:0,c3:1} \\
+\texttt{g1f3} (cavalo) & \texttt{CC1BB3\#} & \texttt{g1:0,f3:1} \\
+\texttt{d2h6} mistura os blocos & \texttt{D2DD6\#} & \texttt{d2:0,h6:1} \\
+Terceiro toque volta a \texttt{a} & \texttt{AAA2AAA4\#} & \texttt{a2:0,a4:1} \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Correção com \texttt{*}}} \\[2pt]
+Apaga a fileira errada & \texttt{AA2AA3*4\#} & \texttt{e2:0,e4:1} \\
+Apaga tudo e redigita & \texttt{AA2****A2A4\#} & \texttt{a2:0,a4:1} \\
+\texttt{\#} com entrada incompleta & \texttt{AA2\#} & nada emitido \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Recusas locais (o que o tabuleiro físico também recusaria)}} \\[2pt]
+Origem vazia & \texttt{AA5AA6\#} & nada emitido \\
+Destino ocupado & \texttt{A1A2\#} & nada emitido \\
+Origem igual ao destino & \texttt{AA2AA2\#} & nada emitido \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Comandos}} \\[2pt]
+\texttt{0-1} retira a peça & \texttt{01AA2\#} & \texttt{e2:0} \\
+\texttt{0-2} coloca a peça & \texttt{02AA5\#} & \texttt{e5:1} \\
+\texttt{0-1} em casa já vazia & \texttt{01AA5\#} & nada emitido \\
+\texttt{0-2} em casa já ocupada & \texttt{02AA2\#} & nada emitido \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Sequências de partida}} \\[2pt]
+Espelho acompanha os lances & \texttt{AA2AA4\#AA4AA5\#} & \texttt{e2:0,e4:1} e \texttt{e4:0,e5:1} \\
+Roque curto em dois lances & \texttt{AA2AA4\# CC1BB3\# BB1C4\# AA1CC1\# DD1BB1\#} & \texttt{e1:0,g1:1} seguido de \texttt{h1:0,f1:1} \\
+De pretas, \texttt{e7e5} & \texttt{AA7AA5\#} & \texttt{e7:0,e5:1} \\
+De pretas, \texttt{e2} está vazia & \texttt{AA2AA4\#} & nada emitido \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Reenvio do estado completo}} \\[2pt]
+\texttt{0-9} reenvia as 64 casas & \texttt{09\#} & 1 linha com as 64 casas \\
+Fileiras 1 e 2 ocupadas & \texttt{09\#} & estado inicial correto \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{Digitação em andamento (linhas \texttt{@entry})}} \\[2pt]
+Cada tecla emite uma linha & \texttt{AA2A} & 4 linhas \texttt{@entry} \\
+Origem sai com a casa completa & \texttt{AA2} & \texttt{origin='e2'}, \texttt{text='Lance: E2\_'} \\
+Casa incompleta não vira origem & \texttt{AA2A} & \texttt{origin='e2'} (inalterada) \\
+Destino sai na quarta tecla & \texttt{AA2AA4} & \texttt{target='e4'} \\
+\texttt{\#} limpa a digitação & \texttt{AA2AA4\#} & \texttt{status='Enviado e2e4'} \\
+Comando não emite origem & \texttt{01AA2} & \texttt{origin=None} \\
+\texttt{*} desfaz a origem & \texttt{AA2*} & \texttt{status='Apagado'} \\
+Linhas \texttt{@entry} não contaminam os eventos & --- & canais separados \\
+\bottomrule
+\end{longtable}
+
+\subsection{O que essas evidências cobrem}
+
+Vale destacar três resultados que respondem a riscos concretos do projeto:
+
+\begin{itemize}
+  \item \textbf{O roque funciona pelo teclado.} A sequência de cinco lances
+        produz exatamente os mesmos eventos que o tabuleiro físico produziria
+        em duas etapas --- ou seja, o plano B não perde nenhuma regra especial
+        do xadrez.
+  \item \textbf{A troca de camada é transparente.} Digitar \texttt{AA2AA4\#}
+        gera \texttt{e2:0,e4:1}, exatamente o que a matriz de \emph{reed
+        switches} emitiria para o mesmo lance. Nenhuma linha da camada Python
+        precisou distinguir os dois casos.
+  \item \textbf{As linhas \texttt{@entry} não contaminam o canal de eventos.}
+        A verificação final confirma que um leitor que só entenda
+        \texttt{casa:estado} continua funcionando --- a extensão do protocolo é
+        retrocompatível.
+\end{itemize}
+
+\subsection{Rastreabilidade requisito \texorpdfstring{$\times$}{x} teste}
+\label{sec:rastreabilidade}
+
+A Tabela~\ref{tab:rastreabilidade} atualiza o mapeamento apresentado na semana
+1 (Seção 8.2 do primeiro relatório) com o que esta semana acrescentou, e
+registra o que ainda falta validar.
+
+\begin{table}[htbp]
+\centering
+\caption{Rastreabilidade entre requisitos e evidências, ao fim da semana 3.}
+\label{tab:rastreabilidade}
+\begin{tabular}{@{}L{0.08\textwidth}L{0.48\textwidth}L{0.34\textwidth}@{}}
+\toprule
+\textbf{Req.} & \textbf{Evidência} & \textbf{Estado} \\
+\midrule
+RF1 & \emph{Reed switches}: \texttt{test\_stockfish\_loop} (eventos de sensor
+      $\to$ lances) e mock visual. Hardware: 2 fileiras montadas &
+      Software \checkmark{} · hardware parcial \\
+    & Teclado: 30 verificações de \texttt{test\_keypad\_layer} &
+      Não se aplica --- o lance é informado, não detectado \\
+RF2 & \texttt{test\_stockfish\_loop} (\emph{engine} falsa, \emph{bestmove}
+      aplicado) e \texttt{test\_lichess} / \texttt{test\_challenge} contra o
+      servidor falso da \emph{Board API} & \checkmark{} \\
+RF3 & Mock com GUI (\texttt{make mock}); destaques de destino e barra de
+      status verificados também pela camada de teclado (linhas
+      \texttt{@entry}) & Visual \checkmark{} \\
+RNF1 & Precisão: 100\% dos eventos digitados produziram o evento esperado
+       (30/30). Latência $<$ 200\,ms & Precisão \checkmark{} ·
+       \textbf{latência pendente} \\
+RNF2 & Instrumentação de \emph{timestamps} na GUI & \textbf{Pendente} \\
+RNF3 & Ressincronização (\texttt{0-9}, \texttt{0-0}) e recusa local de eventos
+       impossíveis, verificadas na suíte & Software \checkmark{} ·
+       \emph{debouncing} em hardware pendente \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As duas pendências são de medição, não de implementação, e concentram o
+trabalho experimental da semana 4: RNF1 e RNF2 exigem instrumentar o caminho
+completo (tecla ou sensor $\to$ lance aplicado $\to$ quadro renderizado) no
+Raspberry Pi, e RNF3 depende das fileiras montadas para exercitar o
+\emph{debouncing} com esbarrões reais.
+
+% ===========================================================================
+\section{Documentação e Diagramas}
+% ===========================================================================
+
+A documentação foi revisada e ampliada em cerca de 380 linhas no
+\texttt{README}, com seções novas para o menu de configuração, as opções
+durante a partida, o processo em C e suas duas camadas, o protocolo
+\texttt{@entry} e o roteiro de conferência da fiação do teclado (incluindo uma
+tabela de sintoma $\to$ causa provável). Todo módulo novo, em C e em Python,
+traz cabeçalho explicando a decisão de projeto que ele materializa, e não
+apenas o que ele faz.
+
+Quanto aos diagramas, o fluxograma da semana 2 (\texttt{arq\_cpp}) descrevia o
+laço de varredura herdado da prova de conceito em Arduino e não corresponde
+mais ao código. Ele permanece no repositório, referenciado pelo relatório
+daquela semana, mas foi substituído aqui por dois diagramas novos --- mantidos
+como fonte em Mermaid (\texttt{docs/diagramas/*.mmd}) e renderizados por
+\texttt{mmdc}:
+
+\begin{itemize}
+  \item \texttt{arq\_c.mmd} --- arquitetura modular do processo em C, mostrando
+        as duas camadas convergindo para o mesmo módulo de IPC
+        (Figura~\ref{fig:arq_c.png});
+  \item \texttt{fluxo\_keypad.mmd} --- máquina de digitação de um lance,
+        incluindo comandos e recusa local (Figura~\ref{fig:fluxo_keypad.png}).
+\end{itemize}
+
+Este relatório passou a ser escrito diretamente em \LaTeX{}
+(\texttt{docs/Relatorio-3.tex}), em vez de Markdown convertido por Pandoc. O
+alvo \texttt{make pdf3} gera os diagramas e compila o documento com
+\texttt{xelatex}, tudo dentro do ambiente reprodutível do Nix.
+
+% ===========================================================================
+\section{Estruturação do Relatório Final}
+% ===========================================================================
+
+O relatório final consolidará os relatórios semanais na estrutura abaixo,
+herdada do relatório da semana 1 e ajustada ao que o projeto se tornou. A
+coluna de estado indica o que já existe escrito e o que falta.
+
+\begin{table}[htbp]
+\centering
+\caption{Estrutura prevista para o relatório final.}
+\begin{tabular}{@{}L{0.07\textwidth}L{0.46\textwidth}L{0.37\textwidth}@{}}
+\toprule
+\textbf{Seção} & \textbf{Conteúdo} & \textbf{Estado} \\
+\midrule
+1 & Motivação e visão geral & Semana 1, revisar \\
+2 & Objetivos & Semana 1, revisar o escopo de hardware \\
+3 & Requisitos funcionais e não funcionais & Semana 1 (RF1--RF3, RNF1--RNF3); revisar à luz do plano B \\
+4 & Ferramentas utilizadas & Atualizar: C no lugar de C++/Arduino, teclado 4$\times$4 \\
+5 & Metodologia de desenvolvimento & Semana 1; acrescentar o plano B como decisão de risco \\
+6 & Arquitetura física & Semana 1; atualizar com o teclado e a placa efetivamente usada \\
+7 & Arquitetura de software (estática e comportamental) & Semana 1 + diagramas novos da semana 3 \\
+8 & Implementação: camada Python & Semanas 1--3 \\
+9 & Implementação: processo em C e camadas de entrada & Semana 3 (Seções 1.1--1.3) \\
+10 & Interface com o usuário & Semana 3 (Seções 1.4--1.5) \\
+11 & Hardware: tabuleiro e teclado & Semanas 2--3, pendente o fechamento da montagem \\
+12 & Testes: casos planejados, resultados e rastreabilidade & Semana 3 (Seção 3); falta a medição de latência \\
+13 & Revisão por pares e evolução do projeto & Semana 2 (Issues nos repositórios dos Grupos P e S) \\
+14 & Conclusões, dificuldades e lições & A escrever na semana 4 \\
+15 & Referências (ABNT) & Semana 1; acrescentar as citações no texto \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O limite de 20 páginas de conteúdo (sem referências e anexos) é a restrição
+que orienta a consolidação: os relatórios semanais somados excedem esse total,
+de modo que as seções de implementação serão condensadas em torno das decisões
+de projeto, e os detalhes de operação --- opções de linha de comando, tabelas
+de teclas, protocolo IPC --- ficam no \texttt{README}, referenciado a partir do
+relatório.
+
+% ===========================================================================
+\section{Entrega e Próximos Passos}
+% ===========================================================================
+
+A terceira \emph{release} no GitHub marca o estado descrito aqui: processo em C
+modular com duas camadas de entrada, interface de configuração e de ações,
+suíte com quatro conjuntos de testes e documentação revisada.
+
+Para a semana 4:
+
+\begin{itemize}
+  \item medir a latência ponta a ponta (tecla ou sensor até o lance aplicado na
+        \emph{engine}), o requisito de $<$ 200\,ms definido na semana 1 --- é a
+        evidência experimental que ainda falta;
+  \item fechar o que for possível da montagem do tabuleiro e medir a taxa de
+        acerto da detecção nas fileiras já montadas;
+  \item teste de aceitação: partidas completas contra o Stockfish e contra a IA
+        do Lichess pelo teclado, do início ao xeque-mate;
+  \item consolidar o relatório final na estrutura da seção anterior, dentro do
+        limite de 20 páginas, com as citações no texto em norma ABNT;
+  \item registrar em \texttt{docs/figuras/} o material fotográfico da bancada e
+        da montagem, como evidência das validações de hardware descritas na
+        Seção~2;
+  \item recolher as \emph{branches} \texttt{plano\_b} e \texttt{interface}, já
+        integradas por \emph{pull request}, deixando apenas \texttt{main} na
+        entrega final.
+\end{itemize}
+
+\end{document}

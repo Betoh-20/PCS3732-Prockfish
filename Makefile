@@ -108,7 +108,7 @@ HW_ENV = CHESS_C_PROCESS='$(CURDIR)/$(C_BIN)' \
 
 .PHONY: help menu stockfish lichess-ai random-sir lichess-user lichess-seek \
         lichess-game mock test deps shell shell-classic check-token clean pdf \
-        board-input stockfish-hw lichess-ai-hw keypad keypad-stdin
+        pdf3 diagramas board-input stockfish-hw lichess-ai-hw keypad keypad-stdin
 
 # ---------------------------------------------------------------------------
 #  Ajuda (alvo padrão)
@@ -138,6 +138,8 @@ help:
 	@echo '  make shell                         abre o devShell do Nix (nix-shell: make shell-classic)'
 	@echo '  make clean                         remove __pycache__ e caches'
 	@echo '  make pdf                           gera docs/Relatorio-1.pdf (requer pandoc)'
+	@echo '  make pdf3                          gera docs/Relatorio-3.pdf (LaTeX/xelatex)'
+	@echo '  make diagramas                     renderiza docs/diagramas/*.mmd em .png'
 	@echo ''
 	@echo 'Variáveis (make <alvo> VAR=valor):'
 	@echo '  COLOR=$(COLOR)  LOG_LEVEL=$(LOG_LEVEL)  ARGS=...'
@@ -266,22 +268,42 @@ clean:
 #  Documentação
 # ---------------------------------------------------------------------------
 
-# Gera o PDF do relatório a partir de docs/Relatorio-1.md.
-# Requer pandoc e mermaid-filter (npm install -g mermaid-filter) ou
-# pandoc com suporte a mermaid via --filter mermaid-filter.
+# Dois relatórios, duas ferramentas:
 #
-#   make pdf
+#   make pdf    docs/Relatorio-1.md  -> PDF (pandoc + xelatex)
+#   make pdf3   docs/Relatorio-3.tex -> PDF (xelatex direto)
 #
+# Os dois dependem dos diagramas (`make diagramas`), gerados dos .mmd por
+# mmdc. `USE_NIX=1` traz pandoc, texlive e mermaid-cli sem instalar nada.
 REPORT_SRC  := docs/Relatorio-1.md
 REPORT_PDF  := docs/Relatorio-1.pdf
+
+REPORT3_TEX := docs/Relatorio-3.tex
+REPORT3_PDF := docs/Relatorio-3.pdf
 
 DIAGRAMS_SRC = $(wildcard docs/diagramas/*.mmd)
 DIAGRAMS_PNG = $(DIAGRAMS_SRC:.mmd=.png)
 
 docs/diagramas/%.png: docs/diagramas/%.mmd
-	mmdc -i $< -o $@ -b white -s 4
+	$(RUN) mmdc -i $< -o $@ -b white -s 4
+
+diagramas: $(DIAGRAMS_PNG)
 
 pdf: $(DIAGRAMS_PNG) $(REPORT_PDF)
+
+pdf3: $(DIAGRAMS_PNG) $(REPORT3_PDF)
+
+# Duas passadas: a primeira escreve o .toc e os \label, a segunda os resolve.
+# -output-directory faz os auxiliares ficarem em docs/ (limpos no fim), e
+# `cd docs` não serve aqui porque os \includegraphics são relativos a ele.
+$(REPORT3_PDF): $(REPORT3_TEX) $(DIAGRAMS_PNG)
+	$(RUN) xelatex -interaction=nonstopmode -halt-on-error \
+	       -output-directory=docs $(REPORT3_TEX) >/dev/null
+	$(RUN) xelatex -interaction=nonstopmode -halt-on-error \
+	       -output-directory=docs $(REPORT3_TEX) >/dev/null
+	@rm -f docs/Relatorio-3.aux docs/Relatorio-3.log docs/Relatorio-3.out \
+	       docs/Relatorio-3.toc
+	@echo "PDF gerado: $(REPORT3_PDF)"
 
 $(REPORT_PDF): $(REPORT_SRC) $(DIAGRAMS_PNG) docs/header.tex
 	pandoc $(REPORT_SRC) \

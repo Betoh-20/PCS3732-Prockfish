@@ -1,0 +1,40 @@
+graph TB
+    subgraph ENT["Entrada física"]
+        direction LR
+        REED["Matriz 8×8<br/>reed switches + diodos"]
+        KP["Teclado matricial 4×4"]
+    end
+
+    subgraph PROC["Processo C — build/board_input"]
+        direction TB
+        MAIN["main.c — CLI: escolhe a camada de entrada"]
+        GPIO["gpio.c — wrapper da wiringPi"]
+        RL["reed_layer.c<br/>varredura + debouncing"]
+        KL["keypad_layer.c<br/>lances digitados + espelho"]
+        APOIO["board.c · lcd.c · runstate.c<br/>casas, display 16x2 (opcional), SIGINT"]
+        IPCC["ipc.c — serialização dos eventos"]
+    end
+
+    subgraph PY["Aplicação Python"]
+        direction LR
+        IPCPY["ipc_reader.py"]
+        MOVE["move_interpreter.py"]
+        GUI["gui.py"]
+    end
+
+    REED --> GPIO
+    KP --> GPIO
+    MAIN --> GPIO
+    GPIO --> RL
+    GPIO --> KL
+    RL --- APOIO
+    KL --- APOIO
+    RL -->|"casa:estado"| IPCC
+    KL -->|"casa:estado + @entry"| IPCC
+    IPCC -->|"stdout / Named Pipe"| IPCPY
+    IPCPY --> MOVE
+    IPCPY --> GUI
+
+    style ENT fill:#1a1a2e,stroke:#e94560,color:#fff
+    style PROC fill:#16213e,stroke:#0f3460,color:#fff
+    style PY fill:#0f3460,stroke:#53a8b6,color:#fff
