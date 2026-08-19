@@ -43,9 +43,11 @@
  *      0 9 #          reenvia o estado completo das 64 casas
  *      0 0 #          volta o espelho à posição inicial e o reenvia
  *
- *  O comando de retirada é o que fecha o ciclo com a camada Python: quando o
- *  oponente captura uma peça do jogador, a aplicação pede "remova a peça de
- *  e5" — com a matriz de reed isso é tirar a peça da mesa, aqui é `0 1 E5 #`.
+ *  O comando de retirada continua existindo para acertar o espelho à mão, mas
+ *  a captura pelo oponente não precisa mais dele: a camada Python manda o
+ *  espelho dela por stdin (`@sync|...`, ver ipc.h) assim que a peça sai do
+ *  tabuleiro virtual, e esta camada adota. Ao jogador resta só tirar a peça da
+ *  mesa — a aplicação avisa qual.
  */
 
 #ifndef KEYPAD_LAYER_H

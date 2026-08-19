@@ -16,6 +16,13 @@ Protocolo de eventos:
         "@entry|e2||Lance: E2_|Digitando...\n"
     É o lance em formação, antes do '#' — ver `KeypadEntry`.
 
+Canal de volta (aplicação → processo C):
+    Pelo stdin do subprocesso, quando `pipe_stdin` está ligado. Uma linha,
+    um comando; hoje só existe o espelho do tabuleiro:
+        "@sync|<64 caracteres '0'/'1'>\n"
+    É o que dispensa o jogador de digitar `0 1 <casa> #` quando o oponente
+    captura uma peça dele. Ver `src/ipc.h` e `app/main.py`.
+
 Modos suportados:
     - 'subprocess': Inicia o processo C/mock como subprocesso e lê stdout
     - 'stdin': Lê da entrada padrão (útil para piping)
@@ -167,11 +174,13 @@ class IPCReader:
         pipe_path: str = PIPE_PATH,
         process_path: str = C_PROCESS_PATH,
         process_args: Optional[list[str]] = None,
+        pipe_stdin: bool = False,
     ):
         self._mode = mode
         self._pipe_path = pipe_path
         self._process_path = process_path
         self._process_args = list(process_args or [])
+        self._pipe_stdin = pipe_stdin
         self._queue: Queue[dict[str, int]] = Queue()
         # Fila separada para a digitação do teclado: ela é informação de
         # tela, e misturá-la com os eventos de sensor obrigaria todo mundo
@@ -181,6 +190,16 @@ class IPCReader:
         self._thread: Optional[threading.Thread] = None
         self._process: Optional[subprocess.Popen] = None
         self._source = None  # file-like object para leitura
+
+    def set_pipe_stdin(self, pipe_stdin: bool) -> None:
+        """Define se o stdin do subprocesso é nosso. Só vale antes de `start()`.
+
+        Desligado por padrão porque quase todo mundo do outro lado quer o
+        terminal: o mock lê comandos do usuário e o processo C em
+        `--keys stdin` lê as teclas dali. Ligar isto rouba esse terminal, e em
+        troca `send_to_process` deixa de ser um pedido no vácuo.
+        """
+        self._pipe_stdin = pipe_stdin
 
     def set_process_args(self, args: list[str]) -> None:
         """Define os argumentos do subprocesso. Só vale antes de `start()`.
@@ -224,7 +243,9 @@ class IPCReader:
 
         No Windows, abre uma janela de console separada para que o
         usuário possa digitar jogadas interativamente. No Linux, o
-        stdin/stderr são herdados do processo pai (terminal).
+        stdin/stderr são herdados do processo pai (terminal) — a menos que
+        `pipe_stdin` esteja ligado, e aí o stdin vira um cano nosso, por onde
+        a aplicação manda comandos (ver `send_to_process`).
         """
         if self._process_path.endswith(".py"):
             cmd = [sys.executable, self._process_path, *self._process_args]
@@ -246,7 +267,9 @@ class IPCReader:
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
         else:
             # No Linux, herda stdin/stderr do terminal pai
-            popen_kwargs["stdin"] = None
+            popen_kwargs["stdin"] = (
+                subprocess.PIPE if self._pipe_stdin else None
+            )
             popen_kwargs["stderr"] = None
 
         self._process = subprocess.Popen(cmd, **popen_kwargs)
@@ -327,6 +350,11 @@ class IPCReader:
         return not self._queue.empty()
 
     @property
+    def mode(self) -> str:
+        """Modo IPC em uso: 'subprocess', 'stdin' ou 'pipe'."""
+        return self._mode
+
+    @property
     def is_running(self) -> bool:
         """Indica se o leitor está ativo."""
         return self._running
@@ -334,7 +362,10 @@ class IPCReader:
     def send_to_process(self, message: str) -> None:
         """Envia uma mensagem para o subprocesso (via stdin).
 
-        Útil para enviar comandos ao mock (ex: forçar estado do tabuleiro).
+        É por aqui que a camada de teclado do processo C recebe o espelho do
+        tabuleiro (`@sync|...`). Sem `pipe_stdin`, o stdin é do terminal e não
+        nosso: a mensagem é descartada em silêncio, que é o certo — quem não
+        pediu o canal não depende dele.
         """
         if self._process and self._process.stdin:
             try:
@@ -347,8 +378,15 @@ class IPCReader:
         """Para a leitura e libera recursos."""
         self._running = False
 
-        # Encerra o subprocesso se existir
+        # Encerra o subprocesso se existir. O stdin fecha primeiro: o EOF é o
+        # aviso de que não vem mais comando, e o processo C sai do laço por
+        # conta própria antes do terminate.
         if self._process:
+            if self._process.stdin:
+                try:
+                    self._process.stdin.close()
+                except OSError:
+                    pass
             try:
                 self._process.terminate()
                 self._process.wait(timeout=3)

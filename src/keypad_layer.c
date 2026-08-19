@@ -5,8 +5,10 @@
 #include "keypad_layer.h"
 
 #include <ctype.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "gpio.h"
 #include "ipc.h"
@@ -22,6 +24,9 @@ static const char KEYMAP[KEYPAD_ROWS][KEYPAD_COLUMNS] = {
 };
 
 #define STATUS_MAX (LCD_COLUMNS + 1)
+
+/* Uma linha de comando cabe no prefixo mais as 64 casas, com folga. */
+#define COMMAND_MAX 128
 
 /* O que está sendo digitado agora. O modo determina quantas teclas a entrada
  * ainda espera e o que o '#' vai fazer com elas. */
@@ -289,6 +294,197 @@ static void keypad_backspace(keypad_state *state)
 }
 
 /* ------------------------------------------------------------------------ */
+/*  Comandos vindos da camada Python                                        */
+/* ------------------------------------------------------------------------ */
+
+/* O espelho desta camada é uma aposta: ele nasce na posição inicial e só muda
+ * com o que o jogador digita. Isso basta enquanto todas as peças que saem do
+ * tabuleiro saem por lance do próprio jogador — mas não é o caso quando o
+ * oponente captura. A peça capturada é do jogador, está na mesa e no espelho,
+ * e nada no teclado avisou que ela saiu.
+ *
+ * Antes, quem avisava era o jogador, digitando `0 1 <casa> #`. Agora a camada
+ * Python — que é quem sabe o tabuleiro virtual — manda o espelho dela por
+ * stdin, e esta camada adota. Ver `_push_mirror_to_hardware` em app/main.py.
+ *
+ * O canal é de mão única no sentido inverso ao dos eventos: nada do que chega
+ * aqui vira evento de volta, senão o Python leria como movimento o que ele
+ * mesmo acabou de mandar.
+ */
+
+#define SYNC_PREFIX "@sync|"
+
+/* Acumula uma linha '@...' vinda de stdin.
+ *
+ * Precisa ser um acumulador, e não um `fgets`, porque no modo `--keys stdin`
+ * o mesmo descritor traz as teclas: só o que começa uma linha com '@' é
+ * comando, o resto continua sendo tecla, caractere a caractere. */
+typedef struct {
+    char text[COMMAND_MAX];
+    int length;
+    bool active;      /* dentro de uma linha de comando */
+    bool line_start;  /* o próximo caractere abre uma linha */
+} command_reader;
+
+static void command_reader_init(command_reader *reader)
+{
+    reader->length = 0;
+    reader->text[0] = '\0';
+    reader->active = false;
+    reader->line_start = true;
+}
+
+/* Consome um caractere.
+ *
+ * Returns:
+ *     true se `reader->text` passou a conter uma linha de comando completa;
+ *     false se o caractere foi consumido pelo comando em andamento. Quando
+ *     devolve false com `*key` diferente de '\0', o caractere não era de
+ *     comando nenhum e o chamador decide o que fazer com ele. */
+static bool command_reader_feed(command_reader *reader, char c, char *key)
+{
+    *key = '\0';
+
+    if (reader->active) {
+        if (c == '\n' || c == '\r') {
+            reader->text[reader->length] = '\0';
+            reader->active = false;
+            reader->line_start = true;
+            return true;
+        }
+        if (reader->length < COMMAND_MAX - 1) {
+            reader->text[reader->length++] = c;
+        }
+        /* Linha maior que o buffer: o excedente é descartado e o comando
+         * truncado será recusado na validação, que é o certo — melhor não
+         * aplicar meio espelho. */
+        return false;
+    }
+
+    if (reader->line_start && c == '@') {
+        reader->active = true;
+        reader->length = 0;
+        reader->text[reader->length++] = c;
+        return false;
+    }
+
+    reader->line_start = (c == '\n' || c == '\r');
+    *key = c;
+    return false;
+}
+
+/* Adota o espelho que a camada Python mandou.
+ *
+ * Args:
+ *     payload: 64 caracteres '0'/'1', na ordem a1..h8 (índice = fileira*8 +
+ *              coluna, a mesma de `board_square`).
+ *
+ * Returns:
+ *     true se o espelho foi adotado. */
+static bool keypad_apply_sync(keypad_state *state, const char *payload)
+{
+    if (strlen(payload) != (size_t)BOARD_SQUARES) {
+        fprintf(stderr, "[teclado] @sync com %zu casas (esperava %d) — "
+                        "ignorado.\n", strlen(payload), BOARD_SQUARES);
+        return false;
+    }
+
+    /* Validação antes de aplicar: um payload meio truncado não pode deixar
+     * metade do espelho atualizada. */
+    for (int square = 0; square < BOARD_SQUARES; square++) {
+        if (payload[square] != '0' && payload[square] != '1') {
+            fprintf(stderr, "[teclado] @sync com caractere invalido '%c' na "
+                            "casa %s — ignorado.\n",
+                    payload[square], board_square_name(square));
+            return false;
+        }
+    }
+
+    int changed = 0;
+    int last = -1;
+    bool last_occupied = false;
+
+    for (int square = 0; square < BOARD_SQUARES; square++) {
+        bool occupied = (payload[square] == '1');
+        if (state->mirror.occupied[square] != occupied) {
+            state->mirror.occupied[square] = occupied;
+            changed++;
+            last = square;
+            last_occupied = occupied;
+            fprintf(stderr, "[teclado] sincronizado: %s %s\n",
+                    board_square_name(square),
+                    occupied ? "ocupada" : "vazia");
+        }
+    }
+
+    if (changed == 0) {
+        return false;
+    }
+
+    /* Uma casa só é o caso normal (a peça que o oponente capturou), e aí o
+     * LCD diz qual peça sair da mesa em vez de um "sincronizado" genérico. */
+    if (changed == 1) {
+        char message[STATUS_MAX];
+        snprintf(message, sizeof(message), "%s %s",
+                 last_occupied ? "Ponha" : "Retire", board_square_name(last));
+        keypad_status(state, message);
+    } else {
+        keypad_status(state, "Sincronizado");
+    }
+    return true;
+}
+
+/* Despacha uma linha de comando completa. */
+static void keypad_command(keypad_state *state, const char *line)
+{
+    if (strncmp(line, SYNC_PREFIX, strlen(SYNC_PREFIX)) == 0) {
+        if (keypad_apply_sync(state, line + strlen(SYNC_PREFIX))) {
+            keypad_refresh(state);
+        }
+        return;
+    }
+
+    fprintf(stderr, "[teclado] Comando desconhecido: '%s'\n", line);
+}
+
+/* Lê o que houver em stdin sem bloquear e trata os comandos.
+ *
+ * Só é usada no modo GPIO: ali stdin não tem outro dono. As teclas que
+ * aparecerem por engano (alguém rodando o binário à mão num terminal) são
+ * descartadas — quem manda nas teclas é a matriz.
+ *
+ * Returns:
+ *     false em EOF (a camada Python fechou o canal). */
+static bool keypad_poll_commands(keypad_state *state, command_reader *reader)
+{
+    struct pollfd fds = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
+
+    while (poll(&fds, 1, 0) > 0) {
+        /* Descritor quebrado ou inválido: desistir é melhor que insistir a
+         * cada varredura num canal que não vai voltar. */
+        if (fds.revents & (POLLERR | POLLNVAL)) {
+            return false;
+        }
+        if (!(fds.revents & (POLLIN | POLLHUP))) {
+            break;
+        }
+
+        char buffer[COMMAND_MAX];
+        ssize_t count = read(STDIN_FILENO, buffer, sizeof(buffer));
+        if (count <= 0) {
+            return false;  /* EOF ou erro: não há mais comandos a esperar */
+        }
+        for (ssize_t i = 0; i < count; i++) {
+            char key;
+            if (command_reader_feed(reader, buffer[i], &key)) {
+                keypad_command(state, reader->text);
+            }
+        }
+    }
+    return true;
+}
+
+/* ------------------------------------------------------------------------ */
 /*  Execução                                                                */
 /* ------------------------------------------------------------------------ */
 
@@ -543,18 +739,34 @@ static void keypad_announce(const keypad_state *state)
             state->config.color == COLOR_WHITE ? "brancas" : "pretas");
 }
 
-/* Modo de teste sem hardware: as teclas chegam por stdin. */
+/* Modo de teste sem hardware: as teclas chegam por stdin.
+ *
+ * O mesmo descritor traz os comandos da camada Python, e é por isso que as
+ * teclas passam pelo acumulador: uma linha começada em '@' é comando, o resto
+ * continua sendo tecla. */
 static int keypad_run_stdin(keypad_state *state)
 {
     fprintf(stderr, "[teclado] Lendo teclas de stdin (Ctrl+D encerra).\n");
 
+    command_reader reader;
+    command_reader_init(&reader);
+
     int c;
     while (app_running() && (c = getchar()) != EOF) {
-        char key = (char)toupper(c);
+        char raw;
+        if (command_reader_feed(&reader, (char)c, &raw)) {
+            keypad_command(state, reader.text);
+            continue;
+        }
+        if (raw == '\0') {
+            continue;  /* consumido pelo comando em andamento */
+        }
+
+        char key = (char)toupper((unsigned char)raw);
         /* Espaços e quebras de linha são ignorados, para poder digitar
          * "AA2 AA4 #". O teste de '\0' evita casar com o terminador que o
          * strchr também encontra. */
-        if (key != '\0' && strchr("0123456789ABCD*#", key) != NULL) {
+        if (strchr("0123456789ABCD*#", key) != NULL) {
             keypad_key(state, key);
         }
     }
@@ -579,7 +791,20 @@ static int keypad_run_gpio(keypad_state *state)
     int stable = 0;
     int cand_row = -1, cand_col = -1;
 
+    /* Comandos da camada Python só são esperados quando stdin é um cano: num
+     * terminal ele é do usuário, e ler dali roubaria o que ele digita. */
+    command_reader reader;
+    command_reader_init(&reader);
+    bool listen_commands = !isatty(STDIN_FILENO);
+    if (listen_commands) {
+        fprintf(stderr, "[teclado] Ouvindo comandos da camada Python em stdin.\n");
+    }
+
     while (app_running()) {
+        if (listen_commands && !keypad_poll_commands(state, &reader)) {
+            listen_commands = false;  /* canal fechado: segue só com o teclado */
+        }
+
         int row = -1, col = -1;
         char key = keypad_scan_once(config, &row, &col);
 

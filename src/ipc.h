@@ -27,6 +27,21 @@
  * O destino é stdout (modo IPC 'subprocess'/'stdin') ou um Named Pipe
  * (modo 'pipe'). Mensagens para humanos vão sempre para stderr, para não
  * contaminar o canal de eventos.
+ *
+ * ---------------------------------------------------------------------------
+ *  Sentido inverso (Python → C)
+ * ---------------------------------------------------------------------------
+ *
+ * Há um canal de volta, por stdin, que NÃO passa por este módulo: só a camada
+ * de teclado o escuta (ver keypad_layer.c), e nada do que chega por ele vira
+ * evento de saída. Uma linha, um comando:
+ *
+ *     @sync|<64 caracteres '0'/'1'>\n
+ *
+ * É o espelho de ocupação da camada Python, na ordem a1..h8, que a camada de
+ * teclado adota como sendo o dela. Existe porque o teclado não tem como saber
+ * que o oponente capturou uma peça do jogador — nenhuma tecla foi digitada, e
+ * mesmo assim uma casa esvaziou.
  */
 
 #ifndef IPC_H

@@ -631,7 +631,7 @@ mexer numa peça sem fazer um lance:
 
 | Comando | Efeito | Quando usar |
 |---------|--------|-------------|
-| `0` `1` *casa* `#` | Retira a peça da casa | A aplicação pediu "remova a peça de e5" (o oponente capturou) |
+| `0` `1` *casa* `#` | Retira a peça da casa | Acertar o espelho à mão (a captura pelo oponente já é automática) |
 | `0` `2` *casa* `#` | Coloca uma peça na casa | A aplicação pediu "coloque uma peça em e5" |
 | `0` `9` `#` | Reenvia o estado das 64 casas | O tabuleiro virtual e o espelho do teclado divergiram |
 | `0` `0` `#` | Volta o espelho à posição inicial e o reenvia | Recomeçar do zero |
@@ -643,6 +643,34 @@ mexer numa peça sem fazer um lance:
 > continua sendo decidida pelo Python — um lance ilegal é recusado lá e a
 > aplicação pede para desfazê-lo, o que no teclado é digitar o lance ao
 > contrário.
+
+#### Peça capturada pelo oponente
+
+Uma peça do jogador só sai do espelho do teclado porque alguém digitou — e a
+peça que o oponente captura não tem quem a digite. Sem tratamento, ela ficaria
+ocupando a casa: a aplicação pediria `0` `1` *casa* `#` antes de aceitar
+qualquer lance novo, e uma recaptura naquela casa seria recusada pelo próprio
+processo C como "Destino ocupado".
+
+Quem resolve é a aplicação, que é quem sabe da captura: assim que o lance do
+oponente entra no tabuleiro virtual, ela manda o espelho dela ao processo C
+(uma linha `@sync|...` pelo stdin do subprocesso, ver `src/ipc.h`) e o teclado
+adota. **Não é preciso digitar nada.** Ao jogador resta a parte física —
+tirar a peça da mesa —, e tanto a barra de status quanto o LCD dizem qual:
+
+```
+Peça capturada — retire a peça de d5 do tabuleiro.
+```
+
+O aviso é passageiro e não bloqueia o jogo: o lance seguinte já pode ser
+digitado, inclusive a recaptura em d5.
+
+> [!NOTE]
+> Isto vale só para o teclado (`--input keypad` com as teclas no GPIO). Na
+> matriz de reed nada muda: lá o tabuleiro físico é a fonte da verdade, e
+> apagar uma casa que o sensor ainda vê ocupada esconderia justamente a
+> dessincronia que o jogador precisa enxergar — a instrução continua sendo
+> "remova a peça de d5", até que ele a remova de fato.
 
 ### Testar sem hardware
 
@@ -882,6 +910,26 @@ e2:0,e4:1
 
 A camada reed não emite essas linhas: nela a peça na mão já é visível pelos
 próprios sensores.
+
+### Canal de volta (`@sync`)
+
+Os eventos vão só num sentido, mas há um canal de volta — o **stdin** do
+subprocesso — por onde a aplicação manda o espelho do tabuleiro à camada de
+teclado:
+
+```
+@sync|<64 caracteres '0'/'1'>\n
+```
+
+Uma casa por caractere, na ordem a1..h8 (`1` = ocupada). Nada do que chega por
+aí vira evento de saída: a aplicação leria como lance o que ela mesma acabou
+de dizer.
+
+É o que dispensa o jogador de digitar `0` `1` *casa* `#` quando o oponente
+captura uma peça dele — ver [Peça capturada pelo
+oponente](#peça-capturada-pelo-oponente). A aplicação só abre esse canal com
+`--input keypad` e as teclas no GPIO; com `--keys stdin` o stdin é das teclas,
+e na camada reed não há espelho a corrigir.
 
 ## Configuração via variáveis de ambiente
 

@@ -17,6 +17,7 @@ TESTS = [
     ("Loop principal (modo Stockfish)", "test_stockfish_loop.py"),
     # Roda o binário do processo C; pula sozinha se ele não foi compilado.
     ("Camada de teclado (processo C)", "test_keypad_layer.py"),
+    ("Peça capturada sai sozinha (teclado)", "test_keypad_capture.py"),
 ]
 
 here = Path(__file__).resolve().parent

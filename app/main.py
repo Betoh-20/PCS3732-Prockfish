@@ -52,6 +52,10 @@ logger = logging.getLogger(__name__)
 REASON_ILLEGAL = "ilegal"      # o lance foi recusado pelas regras do xadrez
 REASON_BLOCKED = "bloqueado"   # o lance foi feito com o tabuleiro fora da posição
 
+# Ordem das casas no comando "@sync" do processo C: a1..h8, índice
+# fileira*8 + coluna. É a mesma ordem de `board_square()` no lado C.
+SYNC_SQUARES = [chess.square_name(index) for index in range(64)]
+
 # Ações do menu da partida. As duas últimas dizem também como a aplicação
 # termina: voltando ao menu de configuração ou fechando de vez.
 ACTION_RESTART = "restart"
@@ -237,6 +241,11 @@ class ChessApplication:
         # torre. Enquanto isso, nenhum outro lance é aceito.
         self._pending_castling: Optional[PendingCastling] = None
 
+        # Se a camada de teclado do processo C aceita o espelho do tabuleiro
+        # por stdin. Resolvido em `start()`, quando os argumentos do
+        # subprocesso já estão fechados (no Lichess a cor vem antes).
+        self._mirror_sync = False
+
     def start(self) -> None:
         """Inicializa todos os módulos."""
         logger.info("Iniciando aplicação — Modo: %s", self.mode.name)
@@ -264,8 +273,17 @@ class ChessApplication:
             self._start_lichess()
 
         # IPC
-        self.ipc_reader.set_process_args(self._hardware_process_args())
+        args = self._hardware_process_args()
+        self._mirror_sync = self._supports_mirror_sync(args)
+        self.ipc_reader.set_process_args(args)
+        self.ipc_reader.set_pipe_stdin(self._mirror_sync)
         self.ipc_reader.start()
+
+        if self._mirror_sync:
+            logger.info(
+                "Camada de teclado: as peças capturadas pelo oponente saem do "
+                "espelho sozinhas (sem '0 1 <casa> #')."
+            )
 
         self._running = True
 
@@ -301,6 +319,88 @@ class ChessApplication:
         if is_mock and self.player_color == PlayerColor.BLACK:
             args.append("--flip")
         return args + extra
+
+    def _supports_mirror_sync(self, args: list[str]) -> bool:
+        """Se dá para mandar o espelho do tabuleiro ao processo de hardware.
+
+        Só a camada de teclado tem um espelho a corrigir: a de reed switches
+        lê o tabuleiro de verdade, e sobrescrever o que ela leu esconderia
+        justamente a dessincronia que o jogador precisa ver. O mock também
+        fica de fora — ele mantém o tabuleiro dele por outros meios.
+
+        As duas outras condições são sobre o canal: ele é o stdin do
+        subprocesso, então precisa existir subprocesso ('subprocess'), e o
+        stdin não pode já ter dono — em `--keys stdin` é por ali que as teclas
+        entram.
+        """
+        if self._hardware_path == MOCK_PROCESS_PATH:
+            return False
+        if self.ipc_reader.mode != "subprocess":
+            return False
+
+        # Só os pares "--opção valor" interessam, e a última ocorrência vence
+        # (é como o processo C lê a linha de comando).
+        values = {
+            args[i]: args[i + 1] for i in range(len(args) - 1)
+            if args[i].startswith("--")
+        }
+        return (values.get("--input") == "keypad"
+                and values.get("--keys", "gpio") != "stdin")
+
+    def _push_mirror_to_hardware(self) -> None:
+        """Manda o espelho dos sensores para a camada de teclado do processo C.
+
+        O que vai é `physical_board_state`, e não a posição virtual: as duas
+        diferem enquanto houver peça fora do lugar, e é o espelho que precisa
+        ser o mesmo dos dois lados. Mandar a posição virtual apagaria do lado
+        C o registro de um movimento ilegal ainda por desfazer, e a correção
+        que o jogador fosse digitar seria recusada como "Origem vazia".
+        """
+        if not self._mirror_sync:
+            return
+
+        payload = "".join(
+            "1" if self.physical_board_state.get(square, False) else "0"
+            for square in SYNC_SQUARES
+        )
+        self.ipc_reader.send_to_process(f"@sync|{payload}")
+        logger.debug("Espelho enviado ao processo C.")
+
+    def _absorb_captured_pieces(self) -> None:
+        """Tira do espelho as peças que o oponente acabou de capturar.
+
+        No teclado não existe sensor: uma peça só sai do espelho porque
+        alguém digitou. A peça capturada pelo oponente não tem quem a digite —
+        o lance foi do outro lado — e até aqui sobrava para o jogador informá-la
+        à mão (`0 1 <casa> #`) antes de poder jogar de novo, inclusive antes de
+        poder recapturar naquela casa.
+
+        Agora o tabuleiro virtual, que é quem sabe da captura, resolve os dois
+        espelhos. O que resta ao jogador é físico: tirar a peça da mesa. O
+        aviso diz qual, mas não bloqueia o jogo — nada mais depende dele.
+
+        Só as casas a esvaziar são tratadas. Uma casa que deveria ter peça e
+        está vazia não é captura nenhuma: é sinal de que os dois espelhos
+        divergiram, e isso a instrução normal precisa continuar mostrando em
+        vez de ver corrigido em silêncio.
+        """
+        if not self._mirror_sync:
+            return
+
+        _missing, extra = self._board_diff()
+        if not extra:
+            return
+
+        for square in extra:
+            self.physical_board_state[square] = False
+        self._push_mirror_to_hardware()
+
+        logger.info("Peça(s) capturada(s) retirada(s) do espelho: %s", extra)
+        alvo = "a peça" if len(extra) == 1 else "as peças"
+        self._notify(
+            f"Peça capturada — retire {alvo} de {', '.join(sorted(extra))} "
+            "do tabuleiro.", "info",
+        )
 
     def run(self) -> None:
         """Loop principal do jogo."""
@@ -445,6 +545,10 @@ class ChessApplication:
         # O mock entende "reset" quando a aplicação consegue escrever no
         # stdin dele; sem isso, é o jogador que recompõe o tabuleiro.
         self.ipc_reader.send_to_process("reset")
+        # O espelho não é zerado junto: as peças continuam onde estavam na
+        # mesa, e é a diferença para a posição inicial que vira a instrução de
+        # remontar. O processo C precisa partir desse mesmo espelho.
+        self._push_mirror_to_hardware()
 
         logger.info("Partida reiniciada.")
         self._set_board_message("", "info")
@@ -634,6 +738,12 @@ class ChessApplication:
 
         logger.info("Jogada do jogador aplicada: %s", move.uci())
         self._sync_mirror_to_board()
+        # Com o espelho já alinhado, mandá-lo ao processo C sustenta a
+        # invariante que o resto depende: depois de todo lance aplicado, os
+        # dois espelhos são o mesmo. No lance digitado ele já é (foi o teclado
+        # que o mexeu), e aí isto não muda nada — o que se ganha é não ter de
+        # provar caso a caso que continua sendo assim.
+        self._push_mirror_to_hardware()
         self._set_board_message("", "info")
         self._draw_offered = False
         return True
@@ -1072,7 +1182,10 @@ class ChessApplication:
             self.ipc_reader.send_to_process(f"opp {move.uci()}")
 
             # A jogada do oponente pode exigir ação física do jogador —
-            # tirar do tabuleiro a peça que acabou de ser capturada.
+            # tirar do tabuleiro a peça que acabou de ser capturada. No
+            # teclado ela já sai dos espelhos aqui; na matriz de reed quem
+            # tira é o jogador, e a instrução abaixo é que pede.
+            self._absorb_captured_pieces()
             self._update_board_instruction()
             self._refresh_gui()
 
@@ -1272,6 +1385,7 @@ class ChessApplication:
             )
             self.game_state.reset(initial_fen)
             self.physical_board_state = self.game_state.get_expected_sensor_state()
+            self._push_mirror_to_hardware()
 
         self._apply_game_state(event.get("state") or {})
 
@@ -1285,6 +1399,10 @@ class ChessApplication:
             return
 
         self._note_draw_offer(state)
+        # Idem `_handle_stockfish_turn`: o lance que acabou de chegar pode ter
+        # capturado uma peça do jogador. Chamar sempre é seguro — sem casa
+        # sobrando no espelho, não faz nada.
+        self._absorb_captured_pieces()
         self._update_board_instruction()
         self._refresh_gui()
 
@@ -1391,6 +1509,9 @@ class ChessApplication:
         self._in_hand.clear()
         self._pending_castling = None
         self._lifted_square = None
+        # O processo C nasceu com a cor pedida em `--color`, que pode não ser
+        # esta: sem o espelho novo, ele ficaria com as peças na fileira errada.
+        self._push_mirror_to_hardware()
 
         if self.gui:
             self.gui.set_flip(self._orientation_flip())

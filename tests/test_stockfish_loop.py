@@ -28,9 +28,17 @@ class FakeIPC:
     def __init__(self, script):
         self.script = list(script)
         self.sent = []
+        self.pipe_stdin = False
+
+    # A aplicação decide pelo modo se dá para falar com o processo do outro
+    # lado; 'subprocess' é o caso em que daria, se o hardware fosse o certo.
+    mode = "subprocess"
 
     def set_process_args(self, args):
         pass
+
+    def set_pipe_stdin(self, pipe_stdin):
+        self.pipe_stdin = pipe_stdin
 
     def start(self):
         pass
