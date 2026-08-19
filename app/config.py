@@ -164,6 +164,12 @@ LICHESS_INCREMENT = int(os.environ.get("CHESS_LICHESS_INCREMENT", "0"))
 # Tamanho do tabuleiro em pixels (largura e altura do grid 8x8)
 BOARD_SIZE = int(os.environ.get("CHESS_BOARD_SIZE", "640"))
 
+# Abrir o menu e o tabuleiro ocupando a tela inteira. O layout continua sendo
+# desenhado no tamanho acima e é ampliado pelo pygame (ver `app.display`).
+FULLSCREEN = os.environ.get("CHESS_FULLSCREEN", "0").strip().lower() in (
+    "1", "true", "yes", "on", "sim"
+)
+
 # Altura da barra de status inferior
 STATUS_BAR_HEIGHT = 60
 

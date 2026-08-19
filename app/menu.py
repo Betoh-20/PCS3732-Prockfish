@@ -31,6 +31,7 @@ from app.config import (
     BG_COLOR, STATUS_BG_COLOR, TEXT_COLOR, COORD_COLOR,
     INVALID_MOVE_COLOR, LIGHT_SQUARE_COLOR, DARK_SQUARE_COLOR,
 )
+from app.display import set_display_mode, toggle_fullscreen
 from app.launcher import (
     LaunchConfig, Option, build_board_input, visible_options,
 )
@@ -114,7 +115,9 @@ class SetupMenu:
         """Abre o menu e devolve a configuração escolhida (None = sair)."""
         pygame.init()
         pygame.display.set_caption("Tabuleiro de Xadrez Eletrônico — configuração")
-        self._screen = pygame.display.set_mode((self._width, self._height))
+        self._screen, self.config.fullscreen = set_display_mode(
+            (self._width, self._height), self.config.fullscreen
+        )
         self._clock = pygame.time.Clock()
         self._font_title = pygame.font.SysFont("arial", 24, bold=True)
         self._font_row = pygame.font.SysFont("arial", 17)
@@ -229,6 +232,11 @@ class SetupMenu:
     def _handle_key(self, event) -> Optional[bool]:
         key = event.key
 
+        if key == pygame.K_F11:
+            # A escolha fica na configuração: a partida abre do mesmo jeito
+            # que o menu, sem ter que apertar F11 de novo lá dentro.
+            self.config.fullscreen = toggle_fullscreen(self.config.fullscreen)
+            return None
         if key in (pygame.K_ESCAPE, pygame.K_q):
             return False
         if key in (pygame.K_UP, pygame.K_k):
@@ -482,7 +490,7 @@ class SetupMenu:
                       COORD_COLOR))
         lines.append((
             "Setas: escolher/alterar · Enter: editar ou iniciar · "
-            "F5: compilar · Esc: sair",
+            "F5: compilar · F11: tela cheia · Esc: sair",
             COORD_COLOR,
         ))
 

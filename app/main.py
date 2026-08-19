@@ -31,7 +31,7 @@ from app.config import (
     IPC_MODE, STOCKFISH_PATH, STOCKFISH_TIME_LIMIT,
     LICHESS_TOKEN, LICHESS_TOKEN_ORIGIN, LICHESS_TIME_MINUTES, LICHESS_INCREMENT,
     C_PROCESS_PATH, C_PROCESS_ARGS, MOCK_PROCESS_PATH,
-    DEFAULT_TOKEN_FILES, read_token_file,
+    DEFAULT_TOKEN_FILES, read_token_file, FULLSCREEN,
 )
 from app.ipc_reader import IPCReader, KeypadEntry
 from app.game_state import GameState
@@ -136,6 +136,7 @@ class ChessApplication:
         lichess_timeout: float = 180.0,
         no_gui: bool = False,
         flip_board: bool = False,
+        fullscreen: bool = FULLSCREEN,
         hardware_path: str = C_PROCESS_PATH,
         hardware_args: Optional[list[str]] = None,
     ):
@@ -185,7 +186,9 @@ class ChessApplication:
         self._gui_started = False
         self.gui: Optional[ChessGUI] = None
         if not no_gui:
-            self.gui = ChessGUI(flip_board=self._orientation_flip())
+            self.gui = ChessGUI(
+                flip_board=self._orientation_flip(), fullscreen=fullscreen
+            )
 
         self._running = False
         self.physical_board_state = self.game_state.get_expected_sensor_state()
@@ -1629,6 +1632,12 @@ def _run_game(
         return f"Não foi possível iniciar a partida: {exc}", "error", ACTION_MENU
 
     app.run()
+
+    # O F11 da partida vale para o menu seguinte: quem escolheu a tela cheia
+    # ali não quer a janela de volta ao trocar de partida.
+    if app.gui is not None:
+        config.fullscreen = app.gui.fullscreen
+
     return "Partida encerrada — escolha a próxima.", "info", app.exit_reason
 
 
@@ -1744,6 +1753,16 @@ Exemplos de uso:
         "--flip", action="store_true",
         help="Inverte o tabuleiro. Por padrão ele é desenhado da perspectiva "
              "do jogador físico (a cor de --color fica embaixo).",
+    )
+    fullscreen_group = parser.add_mutually_exclusive_group()
+    fullscreen_group.add_argument(
+        "--fullscreen", action="store_true", default=FULLSCREEN,
+        help="Abre o menu e o tabuleiro ocupando a tela inteira (o mesmo que "
+             "CHESS_FULLSCREEN=1). O F11 alterna durante a execução.",
+    )
+    fullscreen_group.add_argument(
+        "--no-fullscreen", dest="fullscreen", action="store_false",
+        help="Abre em janela, mesmo com CHESS_FULLSCREEN definido.",
     )
     parser.add_argument(
         "--no-gui", action="store_true",

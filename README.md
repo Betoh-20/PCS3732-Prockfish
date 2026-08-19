@@ -32,6 +32,7 @@ app/
 ├── stockfish_engine.py  # Interface UCI com Stockfish
 ├── lichess_client.py    # Cliente da Lichess Board API
 ├── gui.py               # Interface gráfica com pygame
+├── display.py           # Criação da janela (tela cheia / escala) das duas telas
 ├── launcher.py          # Configuração de uma partida (modo, entrada, engine)
 ├── menu.py              # Menu que escolhe essa configuração (janela ou terminal)
 └── main.py              # Ponto de entrada
@@ -127,7 +128,7 @@ Stockfish (1s por lance) · peças brancas · entrada: mock (gui)
   Sair
 ──────────────────────────────────────────────────────────────
 Equivalente no terminal: make stockfish COLOR=white
-Setas: escolher/alterar · Enter: editar ou iniciar · F5: compilar · Esc: sair
+Setas: escolher/alterar · Enter: editar ou iniciar · F5: compilar · F11: tela cheia · Esc: sair
 ```
 
 | Tecla | Ação |
@@ -136,6 +137,7 @@ Setas: escolher/alterar · Enter: editar ou iniciar · F5: compilar · Esc: sair
 | `←` `→` | Altera o valor da linha |
 | `Enter` | Edita um campo de texto, alterna um sim/não ou aciona a linha |
 | `F5` | Compila o processo C (o mesmo que `make board-input`) |
+| `F11` | Alterna entre tela cheia e janela |
 | `Esc` / `Q` | Sai da aplicação |
 
 O mouse faz o mesmo: um clique escolhe a linha, o clique seguinte altera o
@@ -293,12 +295,26 @@ Opções:
   --lichess-increment SEGUNDOS Incremento por jogada (padrão: 0)
   --lichess-timeout SEGUNDOS   Espera máxima por um oponente (padrão: 180)
   --flip                       Inverte o tabuleiro
+  --fullscreen / --no-fullscreen  Menu e tabuleiro em tela cheia (F11 alterna)
   --no-gui                     Sem interface gráfica
   --log-level LEVEL            Nível de log
 ```
 
 O tabuleiro é desenhado da perspectiva do jogador físico: com `--color black`
 as pretas já ficam embaixo, e `--flip` inverte essa orientação padrão.
+
+### Tela cheia
+
+`--fullscreen` (ou `CHESS_FULLSCREEN=1`, ou a linha "Tela cheia" do menu) abre
+o menu de configuração e o tabuleiro ocupando o monitor inteiro; `F11` alterna
+a qualquer momento, e a escolha feita durante a partida vale para o menu
+seguinte. O desenho continua sendo feito no tamanho de sempre
+(`CHESS_BOARD_SIZE`) e é ampliado para a tela preservando a proporção, então
+sobram barras nas laterais em monitores mais largos que 696x756.
+
+Com a entrada em `mock`, a tela cheia cobre a janela da matriz de botões (que
+é um processo à parte) — para operar as duas ao mesmo tempo, deixe a aplicação
+em janela.
 
 ### Opções durante a partida
 
@@ -884,6 +900,7 @@ próprios sensores.
 | `CHESS_LICHESS_INCREMENT` | Incremento do seek (s) | `0` |
 | `CHESS_C_PROCESS` | Executável do hardware (ou mock) | `mock/hardware_mock.py` |
 | `CHESS_BOARD_SIZE` | Tamanho do tabuleiro (px) | `640` |
+| `CHESS_FULLSCREEN` | Abre menu e tabuleiro em tela cheia | `0` |
 | `CHESS_MOCK_BOARD_SIZE` | Tamanho da matriz de botões do mock (px) | `560` |
 
 ## Teclas de Atalho
@@ -896,6 +913,7 @@ próprios sensores.
 | `←` `→` | Alterar o valor |
 | `Enter` | Editar o campo, alternar sim/não ou acionar a linha |
 | `F5` | Compilar o processo C |
+| `F11` | Alternar tela cheia |
 | `ESC` / `Q` | Sair |
 
 ### GUI da aplicação
@@ -904,6 +922,7 @@ próprios sensores.
 |-------|------|
 | `ESC` | Abre as [opções da partida](#opções-durante-a-partida) (fecha a janela durante as esperas) |
 | `F` | Inverter tabuleiro |
+| `F11` | Alternar tela cheia |
 | `Q/R/B/N` | Selecionar peça de promoção |
 
 ### Opções da partida (menu aberto)
@@ -913,6 +932,7 @@ próprios sensores.
 | `↑` `↓` | Escolher a ação |
 | `Enter` | Acionar (ações sem volta pedem confirmação) |
 | `S` / `N` | Responder ao "tem certeza?" |
+| `F11` | Alternar tela cheia |
 | `ESC` | Fechar o menu |
 
 ### GUI do mock (matriz de botões)

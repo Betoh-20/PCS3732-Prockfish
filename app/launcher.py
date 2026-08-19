@@ -28,6 +28,7 @@ from app.config import (
     IPC_MODE, STOCKFISH_PATH, STOCKFISH_TIME_LIMIT,
     LICHESS_TIME_MINUTES, LICHESS_INCREMENT,
     C_PROCESS_PATH, C_PROCESS_ARGS, MOCK_PROCESS_PATH,
+    FULLSCREEN,
 )
 from app.lichess_client import is_board_time_control, explain_time_control
 
@@ -183,6 +184,7 @@ class LaunchConfig:
     # Gerais
     ipc_mode: str = IPC_MODE                   # subprocess | stdin | pipe
     flip: bool = False
+    fullscreen: bool = FULLSCREEN
     no_gui: bool = False
     log_level: str = "INFO"
 
@@ -263,6 +265,7 @@ class LaunchConfig:
             "lichess_timeout": self.lichess_timeout,
             "no_gui": self.no_gui,
             "flip_board": self.flip,
+            "fullscreen": self.fullscreen,
             "hardware_path": self.hardware_path(),
             "hardware_args": self.hardware_args(),
         }
@@ -417,6 +420,8 @@ class LaunchConfig:
         extras: list[str] = []
         if self.flip:
             extras.append("--flip")
+        if self.fullscreen != FULLSCREEN:
+            extras.append("--fullscreen" if self.fullscreen else "--no-fullscreen")
         if self.no_gui:
             extras.append("--no-gui")
         if self.lichess_rated and self.game_mode == GameMode.LICHESS:
@@ -511,6 +516,7 @@ class LaunchConfig:
             lichess_increment=args.lichess_increment,
             lichess_timeout=args.lichess_timeout,
             flip=args.flip,
+            fullscreen=args.fullscreen,
             no_gui=args.no_gui,
             log_level=args.log_level,
         )
@@ -800,6 +806,12 @@ OPTIONS: tuple[Option, ...] = (
     Option(
         "flip", "Inverter o tabuleiro", "bool",
         hint="Por padrão ele é desenhado da perspectiva do jogador físico.",
+    ),
+    Option(
+        "fullscreen", "Tela cheia", "bool",
+        hint="Ocupa o monitor inteiro (F11 alterna a qualquer momento). "
+             "Com o mock, cobre a janela da matriz de botões.",
+        visible=lambda c: not c.no_gui,
     ),
     Option(
         "no_gui", "Sem janela do tabuleiro", "bool",

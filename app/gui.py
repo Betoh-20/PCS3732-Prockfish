@@ -29,12 +29,14 @@ except ImportError:
     PYGAME_AVAILABLE = False
 
 from app.config import (
-    BOARD_SIZE, STATUS_BAR_HEIGHT, GUI_FPS,
+    BOARD_SIZE, STATUS_BAR_HEIGHT, GUI_FPS, FULLSCREEN,
     LIGHT_SQUARE_COLOR, DARK_SQUARE_COLOR, HIGHLIGHT_COLOR,
     INVALID_MOVE_COLOR, BG_COLOR, STATUS_BG_COLOR, TEXT_COLOR,
     COORD_COLOR, SELECTED_SQUARE_COLOR, MOVE_HINT_COLOR, CAPTURE_HINT_COLOR,
     PENDING_SQUARE_COLOR,
 )
+from app.display import set_display_mode
+from app.display import toggle_fullscreen as _toggle_fullscreen
 
 logger = logging.getLogger(__name__)
 
@@ -124,12 +126,14 @@ class ChessGUI:
         self,
         board_size: int = BOARD_SIZE,
         flip_board: bool = False,
+        fullscreen: bool = FULLSCREEN,
     ):
         """Inicializa a GUI.
 
         Args:
             board_size: Tamanho do tabuleiro em pixels.
             flip_board: Se True, renderiza com pretas embaixo.
+            fullscreen: Se True, a janela abre ocupando a tela (F11 alterna).
         """
         if not PYGAME_AVAILABLE:
             raise ImportError(
@@ -139,6 +143,7 @@ class ChessGUI:
         self._board_size = board_size
         self._square_size = board_size // 8
         self._flip = flip_board
+        self._fullscreen = fullscreen
         self._margin = 28  # Margem para coordenadas
 
         # Dimensões da janela
@@ -182,8 +187,8 @@ class ChessGUI:
         pygame.init()
         pygame.display.set_caption("♚ Tabuleiro de Xadrez Eletrônico")
 
-        self._screen = pygame.display.set_mode(
-            (self._window_width, self._window_height)
+        self._screen, self._fullscreen = set_display_mode(
+            (self._window_width, self._window_height), self._fullscreen
         )
         self._clock = pygame.time.Clock()
 
@@ -199,9 +204,10 @@ class ChessGUI:
         self._needs_full_redraw = True
 
         logger.info(
-            "GUI iniciada — Tabuleiro: %dx%d, Janela: %dx%d",
+            "GUI iniciada — Tabuleiro: %dx%d, Janela: %dx%d%s",
             self._board_size, self._board_size,
             self._window_width, self._window_height,
+            " (tela cheia)" if self._fullscreen else "",
         )
 
     def _make_piece_font(self, size: int) -> "pygame.font.Font":
@@ -215,6 +221,17 @@ class ChessGUI:
         """Retorna o símbolo a desenhar para uma peça."""
         table = PIECE_UNICODE if self._piece_font_path is not None else PIECE_ASCII
         return table[(piece.piece_type, piece.color)]
+
+    @property
+    def fullscreen(self) -> bool:
+        """Se a janela está ocupando a tela inteira agora."""
+        return self._fullscreen
+
+    def toggle_fullscreen(self) -> None:
+        """Alterna entre tela cheia e janela (F11)."""
+        self._fullscreen = _toggle_fullscreen(self._fullscreen)
+        # A superfície é recriada na troca: o que estava desenhado se perde.
+        self._needs_full_redraw = True
 
     def set_flip(self, flip: bool) -> None:
         """Define a orientação do tabuleiro (True = pretas embaixo)."""
@@ -588,6 +605,7 @@ class ChessGUI:
         move_text = f"Movimento: {board.fullmove_number}"
         if self._actions:
             move_text += "   ·   Esc: opções"
+        move_text += "   ·   F11: tela cheia"
         move_surface = self._font_status.render(move_text, True, COORD_COLOR)
         self._screen.blit(move_surface, (10, bar_y + 32))
 
@@ -756,6 +774,12 @@ class ChessGUI:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+
+            # Tela cheia antes de tudo: vale igual com o menu aberto, com a
+            # confirmação na tela ou durante a partida.
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                self.toggle_fullscreen()
+                continue
 
             if self._confirm is not None:
                 self._handle_confirm_event(event)
