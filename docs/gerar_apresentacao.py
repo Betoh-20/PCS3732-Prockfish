@@ -353,32 +353,37 @@ def s07_ipc(prs):
     cabecalho(s, "O protocolo IPC",
               "Um formato de texto simples é o que torna as camadas intercambiáveis")
 
-    mono(s, MARGEM, Inches(2.0), Inches(6.0), Inches(1.35), [
+    mono(s, MARGEM, Inches(2.0), Inches(5.8), Inches(1.35), [
         ("casa:estado,casa:estado", TITULO),
         ("", TEXTO),
         ("e2:0,e4:1      peça saiu de e2, chegou em e4", VERDE),
     ], tam=15)
 
-    cartao_texto(s, MARGEM, Inches(3.6), Inches(6.0), Inches(2.65),
+    mono(s, MARGEM, Inches(3.55), Inches(5.8), Inches(1.15), [
+        ("@sync|<64 caracteres '0'/'1'>       Python → C", ACENTO),
+        ("", TEXTO),
+        ("Espelho de ocupação, na ordem a1..h8", FRACO),
+    ], tam=15)
+
+    cartao_texto(s, MARGEM, Inches(4.9), Inches(5.8), Inches(1.9),
                  "Eventos de exemplo", [
         "Peão e2→e4  →  e2:0,e4:1",
         "Captura Bxf7  →  c4:0,f7:1",
         "Roque curto  →  e1:0,g1:1  e depois  h1:0,f1:1",
-        "",
-        "O roque chega em duas etapas: rei primeiro, torre depois — como na "
-        "mão do jogador sobre o tabuleiro.",
     ], cor=VERDE)
 
-    cartao_texto(s, MARGEM + Inches(6.4), Inches(2.0), Inches(5.4), Inches(1.35),
+    cartao_texto(s, MARGEM + Inches(6.2), Inches(2.0), Inches(5.6), Inches(1.35),
                  "Reed switches  (--input reed)",
                  ["O jogador move a peça no tabuleiro instrumentado."],
                  cor=VERMELHO)
-    cartao_texto(s, MARGEM + Inches(6.4), Inches(3.6), Inches(5.4), Inches(2.65),
+    cartao_texto(s, MARGEM + Inches(6.2), Inches(3.55), Inches(5.6), Inches(3.25),
                  "Teclado matricial  (--input keypad)", [
         "O jogador digita o lance: AA 2 AA 4 #  →  e2:0,e4:1",
         "Tecla repetida vale pela letra do bloco seguinte (A→a, AA→e).",
-        "Linhas @entry avisam a GUI do que está sendo digitado, para destacar "
-        "origem e destinos legais.",
+        "Linhas @entry avisam a GUI do que está sendo digitado.",
+        "",
+        "Canal de volta: a aplicação manda @sync com o espelho dela, e a "
+        "camada C adota — peças capturadas pelo oponente saem sozinhas.",
     ], cor=ACENTO)
 
     rodape(s, "A camada Python não sabe qual das duas está do outro lado — "
@@ -463,7 +468,45 @@ def s10_interface(prs):
         tam=16, cor=TEXTO, espaco=0)
 
 
-def s11_demo(prs):
+def s11_captura_auto(prs):
+    s = slide_vazio(prs)
+    cabecalho(s, "Retirada automática de peça capturada",
+              "Eliminando o passo manual que travava o teclado")
+
+    larg = Inches(5.85)
+    cartao_texto(s, MARGEM, Inches(1.95), larg, Inches(2.3),
+                 "O problema", [
+        "Quando o oponente captura uma peça do jogador, a peça sai do "
+        "tabuleiro virtual mas fica no espelho da camada C.",
+        "Até aqui, o jogador precisava digitar  0 1 <casa> #  para corrigir "
+        "o espelho antes de poder jogar — inclusive antes de recapturar.",
+    ], cor=VERMELHO)
+
+    cartao_texto(s, MARGEM + larg + Inches(0.5), Inches(1.95), larg, Inches(2.3),
+                 "A solução", [
+        "Canal de volta Python → C por stdin: a aplicação manda "
+        "@sync|<64 chars '0'/'1'> com o espelho dela.",
+        "A camada C adota o espelho, e o LCD mostra qual peça retirar da "
+        "mesa — sem bloquear o jogo.",
+    ], cor=VERDE)
+
+    tf = caixa(s, MARGEM, Inches(4.55), L - 2 * MARGEM, Inches(2.3))
+    par(tf, "Onde a sincronização acontece", tam=19, cor=TITULO,
+        negrito=True, espaco=10, primeiro=True)
+    for item in (
+        "Após todo lance aplicado (_push_mirror_to_hardware): mantém a "
+        "invariante de que os dois espelhos são iguais.",
+        "Após lance do oponente (_absorb_captured_pieces): esvazia do "
+        "espelho Python as casas capturadas e reenvia ao C.",
+        "Na reinicialização e troca de cor: o processo C nasceu com um "
+        "espelho que pode não ser mais o certo.",
+        "Só no teclado GPIO: reed switches leem o tabuleiro de verdade, "
+        "e o mock tem tabuleiro próprio.",
+    ):
+        par(tf, item, tam=14, cor=TEXTO, espaco=5, marcador="▸")
+
+
+def s12_demo(prs):
     s = slide_vazio(prs)
     faixa = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(0.22), A)
     faixa.fill.solid()
@@ -481,36 +524,39 @@ def s11_demo(prs):
             "fileiras montadas do tabuleiro", tam=17, cor=TEXTO, espaco=0)
 
 
-def s12_testes(prs):
+def s13_testes(prs):
     s = slide_vazio(prs)
     cabecalho(s, "Testes realizados",
-              "Quatro suítes automatizadas, sem depender de token, rede, "
+              "Cinco suítes automatizadas, sem depender de token, rede, "
               "Stockfish ou display")
 
     larg = Inches(5.85)
-    cartao_texto(s, MARGEM, Inches(1.95), larg, Inches(2.75),
+    cartao_texto(s, MARGEM, Inches(1.95), larg, Inches(3.15),
                  "Suítes  (make test)", [
         "test_keypad_layer.py — 30 verificações que executam o binário em C "
         "de verdade, digitam teclas em stdin e conferem os eventos",
+        "test_keypad_capture.py — retirada automática da peça capturada: "
+        "canal @sync, validação de payload, integração com a aplicação",
         "test_lichess.py e test_challenge.py — modo online contra um servidor "
         "falso da Board API",
         "test_stockfish_loop.py — regressão do loop principal com engine falsa",
-        "Resultado: todas as 4 suítes passaram",
+        "Resultado: todas as 5 suítes passaram",
     ], cor=VERDE)
 
-    cartao_texto(s, MARGEM + larg + Inches(0.5), Inches(1.95), larg, Inches(2.75),
+    cartao_texto(s, MARGEM + larg + Inches(0.5), Inches(1.95), larg, Inches(3.15),
                  "O que as evidências mostram", [
         "O roque funciona pelo teclado: cinco lances produzem os mesmos "
         "eventos que o tabuleiro físico produziria",
         "A troca de camada é transparente: AA2AA4# gera e2:0,e4:1, idêntico "
         "ao que a matriz de reed switches emitiria",
-        "As linhas @entry não contaminam o canal de eventos — a extensão do "
-        "protocolo é retrocompatível",
-        "Recusas locais corretas: origem vazia, destino ocupado, origem igual "
-        "ao destino",
+        "Peça capturada pelo oponente sai do espelho sozinha, sem intervenção "
+        "manual — e o LCD mostra qual peça tirar da mesa",
+        "Canal @sync não gera evento de volta — a extensão é retrocompatível",
+        "Payloads malformados (curto, inválido, desconhecido) são ignorados: "
+        "meio espelho aplicado nunca acontece",
     ])
 
-    cartao_texto(s, MARGEM, Inches(5.0), L - 2 * MARGEM, Inches(1.7),
+    cartao_texto(s, MARGEM, Inches(5.35), L - 2 * MARGEM, Inches(1.5),
                  "Validação de hardware", [
         "Teclado matricial testado com hardware real (linhas BCM 16/20/21/26, "
         "colunas 19/13/6/5), conferido com o modo de bancada --raw, que mostra "
@@ -521,7 +567,7 @@ def s12_testes(prs):
     ], cor=ACENTO)
 
 
-def s13_rastreabilidade(prs):
+def s14_rastreabilidade(prs):
     s = slide_vazio(prs)
     cabecalho(s, "Resultados por requisito", "Rastreabilidade requisito × evidência")
 
@@ -542,8 +588,8 @@ def s13_rastreabilidade(prs):
          "Renderização incremental implementada; instrumentação de tempos pendente",
          ACENTO),
         ("RNF3", "Robustez contra falsos positivos",
-         "Dupla barreira (debouncing em C + validação em Python) e ressincronização; "
-         "debouncing em hardware pendente", ACENTO),
+         "Dupla barreira (debouncing em C + validação em Python), ressincronização "
+         "e espelho bidirecional (canal @sync); debouncing em hardware pendente", ACENTO),
     ]
     y = Inches(1.95)
     alt = Inches(0.62)
@@ -570,7 +616,7 @@ def s13_rastreabilidade(prs):
               "instrumentar o caminho completo no Raspberry Pi.")
 
 
-def s14_dificuldades(prs):
+def s15_dificuldades(prs):
     s = slide_vazio(prs)
     cabecalho(s, "Dificuldades encontradas", "O que custou tempo e o que aprendemos")
 
@@ -585,8 +631,8 @@ def s14_dificuldades(prs):
         ("Tabuleiro físico e tabuleiro virtual divergem",
          "Reed switches dizem onde há ímã, não qual peça é. Capturas do oponente "
          "e lances ilegais dessincronizam os dois — resolvido com histórico de "
-         "peças deslocadas, instruções explícitas na barra de status e comandos "
-         "de ressincronização."),
+         "peças deslocadas, instruções na barra de status, ressincronização e "
+         "canal @sync bidirecional para a camada de teclado."),
         ("Restrições da Board API",
          "O Lichess recusa controles de tempo abaixo de 480 s estimados. "
          "Descoberto empiricamente e transformado em verificação prévia, com "
@@ -610,7 +656,7 @@ def s14_dificuldades(prs):
         y += Inches(1.05)
 
 
-def s15_futuro(prs):
+def s16_futuro(prs):
     s = slide_vazio(prs)
     cabecalho(s, "Trabalhos futuros", "O que fica encaminhado")
 
@@ -642,14 +688,16 @@ def s15_futuro(prs):
         primeiro=True)
     par(tf, "O sistema está jogável de ponta a ponta — contra o Stockfish e "
             "contra oponentes online — com toda a lógica de xadrez, a interface "
-            "e a integração validadas por testes automatizados. O que separa o "
-            "projeto do escopo original é a montagem física do tabuleiro, e a "
-            "decisão de manter as camadas de entrada intercambiáveis foi o que "
-            "permitiu que esse atraso não bloqueasse o resto.",
+            "e a integração validadas por testes automatizados. A retirada "
+            "automática de peças capturadas fechou o último atrito de usabilidade "
+            "do teclado. O que separa o projeto do escopo original é a montagem "
+            "física do tabuleiro, e a decisão de manter as camadas de entrada "
+            "intercambiáveis foi o que permitiu que esse atraso não bloqueasse "
+            "o resto.",
         tam=15, cor=TEXTO, espaco=0)
 
 
-def s16_fim(prs):
+def s17_fim(prs):
     s = slide_vazio(prs)
     faixa = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(0.22), A)
     faixa.fill.solid()
@@ -670,9 +718,9 @@ def main():
     prs.slide_width, prs.slide_height = L, A
     for construir in (s01_capa, s02_motivacao, s03_objetivos, s04_solucao,
                       s05_arquitetura, s06_fisica, s07_ipc, s08_fluxo,
-                      s09_plano_b, s10_interface, s11_demo, s12_testes,
-                      s13_rastreabilidade, s14_dificuldades, s15_futuro,
-                      s16_fim):
+                      s09_plano_b, s10_interface, s11_captura_auto,
+                      s12_demo, s13_testes, s14_rastreabilidade,
+                      s15_dificuldades, s16_futuro, s17_fim):
         construir(prs)
     prs.save(SAIDA)
     print(f"{SAIDA.relative_to(RAIZ)} — {len(prs.slides.__iter__.__self__._sldIdLst)} slides")
